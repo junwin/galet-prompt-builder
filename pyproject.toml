@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "galet-prompt-builder"
+version = "0.1.0.dev0"
+description = "Provider-neutral, memory-aware prompt compilation"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "galet @ git+https://github.com/junwin/galet.git@94f5f2d560c84ea48bd910fb7ca4bd6eddc515b6",
+    "galet-memory @ git+https://github.com/junwin/galet-memory.git@4cba34069a4662b7af7382c093d4f662df3d4317",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
