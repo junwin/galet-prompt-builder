@@ -110,15 +110,6 @@ def _resolve_session(
 
 
 def _budgets(args: argparse.Namespace) -> PromptBudgets:
-    memory_tokens = (
-        args.episodic_event_tokens + args.episodic_digest_tokens
-    )
-    remaining = max(
-        0,
-        args.total_tokens
-        - args.safety_margin_tokens
-        - memory_tokens,
-    )
     return PromptBudgets(
         total_tokens=args.total_tokens,
         procedural_tokens=0,
@@ -132,14 +123,14 @@ def _budgets(args: argparse.Namespace) -> PromptBudgets:
 def _limits(args: argparse.Namespace) -> PromptLimits:
     return PromptLimits(
         maximum_total_tokens=max(args.total_tokens, 16000),
-        maximum_procedural_tokens=0,
+        maximum_procedural_tokens=1,
         maximum_episodic_event_tokens=max(
             args.episodic_event_tokens, 6000
         ),
         maximum_episodic_digest_tokens=max(
             args.episodic_digest_tokens, 2000
         ),
-        maximum_semantic_tokens=0,
+        maximum_semantic_tokens=1,
         maximum_events=20,
         maximum_digests=5,
         maximum_item_chars=12000,
