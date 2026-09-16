@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Sequence
+from typing import Literal, Optional, Sequence
 
 
 PromptSource = Literal[
@@ -25,6 +25,10 @@ class PromptRequest:
     semantic_namespaces: Sequence[str] = field(
         default_factory=lambda: ("external",)
     )
+    semantic_score_threshold: float = 0.0
+    episodic_event_kinds: Optional[Sequence[str]] = None
+    include_structured_episodic_events: bool = True
+    episodic_digest_score_threshold: float = 0.0
     include_procedural: bool = True
     include_episodic: bool = True
     include_semantic: bool = True
@@ -52,6 +56,9 @@ class PromptLimits:
     maximum_digests: int = 5
     maximum_semantic_documents: int = 5
     maximum_item_chars: int = 12000
+    maximum_episodic_event_chars: Optional[int] = None
+    maximum_episodic_digest_chars: Optional[int] = None
+    maximum_semantic_item_chars: Optional[int] = None
     message_overhead_tokens: int = 4
 
 
