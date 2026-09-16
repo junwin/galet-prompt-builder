@@ -16,6 +16,9 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=8"]
 
+[project.scripts]
+galet-prompt-run = "galet_prompt_builder.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
