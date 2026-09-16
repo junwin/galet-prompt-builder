@@ -9,8 +9,8 @@ description = "Provider-neutral, memory-aware prompt compilation"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "galet @ git+https://github.com/junwin/galet.git@94f5f2d560c84ea48bd910fb7ca4bd6eddc515b6",
-    "galet-memory @ git+https://github.com/junwin/galet-memory.git@4cba34069a4662b7af7382c093d4f662df3d4317",
+    "galet @ git+https://github.com/junwin/galet.git@cd73d43729f9ba7b88096902efd677181283d12d",
+    "galet-memory @ git+https://github.com/junwin/galet-memory.git@0e2240cf09c2c30e0a7e20b5ce55ca8b50b497f9",
 ]
 
 [project.optional-dependencies]
