@@ -1,7 +1,13 @@
 import json
 
-from galet_memory import EpisodicEvent, SqliteEpisodicMemory
+from galet_memory import (
+    EpisodicEvent,
+    SemanticDocument,
+    SemanticMemoryResult,
+    SqliteEpisodicMemory,
+)
 
+import galet_prompt_builder.cli as cli_module
 from galet_prompt_builder.cli import main
 
 
@@ -111,3 +117,72 @@ def test_cli_rejects_missing_database(tmp_path, capsys):
     assert result == 2
     assert "SQLite database not found" in captured.err
     assert not database.exists()
+
+
+def test_cli_semantic_namespaces_are_optional(tmp_path, capsys, monkeypatch):
+    _database(tmp_path)
+    embedding_database = tmp_path / "data" / "embeddings-v2.sqlite"
+    embedding_database.touch()
+    requests = []
+
+    class FakeSemanticMemory:
+        def recall(self, request):
+            requests.append(request)
+            return SemanticMemoryResult(
+                documents=[
+                    SemanticDocument(
+                        "doc-1",
+                        "Volume six",
+                        "A relevant semantic result.",
+                        score=0.9,
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(
+        cli_module,
+        "_semantic_memory",
+        lambda args, database, resources: FakeSemanticMemory(),
+    )
+
+    result = main(
+        [
+            "Find the relevant notes",
+            "--chat-name",
+            "Prompt Comparison",
+            "--storage-root",
+            str(tmp_path),
+            "--namespaces",
+            "vol_6",
+            "vol_7",
+            "documents",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert "A relevant semantic result." in captured.out
+    assert requests[0].namespaces == ["vol_6", "vol_7", "documents"]
+
+
+def test_cli_without_namespaces_does_not_build_semantic_memory(
+    tmp_path, capsys, monkeypatch
+):
+    _database(tmp_path)
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("semantic memory must remain disabled")
+
+    monkeypatch.setattr(cli_module, "_semantic_memory", fail_if_called)
+
+    result = main(
+        [
+            "Episodic only",
+            "--chat-name",
+            "Prompt Comparison",
+            "--storage-root",
+            str(tmp_path),
+        ]
+    )
+
+    assert result == 0
