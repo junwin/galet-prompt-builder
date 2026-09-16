@@ -34,6 +34,15 @@ compiled = compiler.compile(
         context_name="project",
         system_instructions=["You are a careful assistant."],
         current_input="What did we decide about storage?",
+        semantic_namespaces=("documents",),
+        semantic_score_threshold=0.30,
+        episodic_event_kinds=(
+            "user_message",
+            "assistant_message",
+            "session_digest",
+        ),
+        include_structured_episodic_events=False,
+        episodic_digest_score_threshold=0.40,
     ),
     PromptBudgets(
         total_tokens=8000,
@@ -49,6 +58,12 @@ compiled = compiler.compile(
         maximum_episodic_event_tokens=4000,
         maximum_episodic_digest_tokens=2000,
         maximum_semantic_tokens=4000,
+        maximum_events=6,
+        maximum_digests=2,
+        maximum_semantic_documents=3,
+        maximum_episodic_event_chars=4000,
+        maximum_episodic_digest_chars=1800,
+        maximum_semantic_item_chars=1800,
     ),
 )
 
@@ -59,6 +74,11 @@ metrics = compiled.metrics
 The default relevance assessor is deterministic and makes no network calls.
 `GaletRelevanceAssessor` is available when an application explicitly wants an
 LLM-based assessment; all such calls go through Galet's `LLMApi`.
+
+Prompt policy is explicit and agent-independent. Applications choose the
+overall and per-section token budgets, retrieval counts, event kinds, relevance
+thresholds, and per-item character caps. An agent may supply system
+instructions, but no agent object or application policy is required.
 
 
 ## Prompt comparison CLI
@@ -108,6 +128,36 @@ galet-prompt-run \
   "What did I write about attention?" \
   --chat-name "Prompt Builder Work" \
   --namespaces vol_6 vol_7 documents
+```
+
+The comparison runner uses deliberately compact defaults:
+
+- 8,000 total tokens with a 500-token safety margin
+- 1,000 recent-event tokens across at most 6 events
+- 500 digest tokens across at most 2 digests
+- 1,000 semantic tokens across at most 3 documents
+- semantic score threshold 0.30
+- digest score threshold 0.40
+- conversational event kinds only; structured tool payloads are excluded
+
+Every policy value can be stated explicitly:
+
+```bash
+galet-prompt-run \
+  "What did I write about attention?" \
+  --chat-name "Prompt Builder Work" \
+  --namespaces vol_6 vol_7 documents \
+  --total-tokens 6000 \
+  --safety-margin-tokens 500 \
+  --episodic-event-tokens 800 \
+  --max-events 6 \
+  --episodic-digest-tokens 400 \
+  --max-digests 2 \
+  --digest-score-threshold 0.45 \
+  --semantic-tokens 900 \
+  --semantic-top-k 3 \
+  --semantic-score-threshold 0.35 \
+  --semantic-item-max-chars 1800
 ```
 
 With no `--namespaces`, the namespace list is empty and the runner does not
