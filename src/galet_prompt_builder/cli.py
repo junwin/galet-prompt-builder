@@ -3,9 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from contextlib import ExitStack
 from dataclasses import asdict
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from galet_memory import (
     EpisodicSession,
@@ -53,6 +54,31 @@ def _parser() -> argparse.ArgumentParser:
         help="Explicit chat2.sqlite path; overrides storage root and namespace",
     )
     parser.add_argument(
+        "--namespaces",
+        nargs="*",
+        default=[],
+        help=(
+            "Semantic namespaces to search, for example: "
+            "--namespaces vol_6 vol_7 documents (default: none)"
+        ),
+    )
+    parser.add_argument(
+        "--embedding-db",
+        type=Path,
+        help=(
+            "Explicit embeddings-v2.sqlite path; overrides storage root "
+            "and namespace"
+        ),
+    )
+    parser.add_argument(
+        "--credential-path",
+        help="Directory containing Galet credential files",
+    )
+    parser.add_argument(
+        "--sqlite-vec-extension",
+        help="Explicit path to the sqlite-vec extension",
+    )
+    parser.add_argument(
         "--system",
         action="append",
         default=[],
@@ -67,6 +93,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--total-tokens", type=int, default=8000)
     parser.add_argument("--episodic-event-tokens", type=int, default=3000)
     parser.add_argument("--episodic-digest-tokens", type=int, default=1000)
+    parser.add_argument("--semantic-tokens", type=int, default=2000)
+    parser.add_argument("--semantic-top-k", type=int, default=5)
     parser.add_argument("--safety-margin-tokens", type=int, default=500)
     return parser
 
@@ -78,6 +106,50 @@ def _database_path(args: argparse.Namespace) -> Path:
         args.storage_root.expanduser()
         / args.storage_namespace
         / "chat2.sqlite"
+    )
+
+
+def _embedding_database_path(args: argparse.Namespace) -> Path:
+    if args.embedding_db is not None:
+        return args.embedding_db.expanduser()
+    return (
+        args.storage_root.expanduser()
+        / args.storage_namespace
+        / "embeddings-v2.sqlite"
+    )
+
+
+def _semantic_memory(
+    args: argparse.Namespace,
+    database: Path,
+    resources: ExitStack,
+) -> Any:
+    from galet.embedding_router import EmbeddingRouter
+    from galet.mistral_embedding import MistralEmbeddingApi
+    from galet.openai_embedding import OpenAIEmbeddingApi
+    from galet.settings import Settings
+    from galet_memory import VectorSemanticMemory
+    from galet_memory.galet_adapter import GaletEmbeddingProvider
+    from galet_memory.ports import FileTextLoader, SqliteVecEmbeddingIndex
+
+    settings = Settings(credential_path=args.credential_path)
+    embeddings = GaletEmbeddingProvider(
+        EmbeddingRouter(
+            openai_api=OpenAIEmbeddingApi(settings=settings),
+            mistral_api=MistralEmbeddingApi(settings=settings),
+        )
+    )
+    index = resources.enter_context(
+        SqliteVecEmbeddingIndex(
+            database,
+            sqlite_vec_extension_path=args.sqlite_vec_extension,
+            initialize_schema=False,
+        )
+    )
+    return VectorSemanticMemory(
+        embeddings=embeddings,
+        index=index,
+        text_loader=FileTextLoader(),
     )
 
 
@@ -115,7 +187,7 @@ def _budgets(args: argparse.Namespace) -> PromptBudgets:
         procedural_tokens=0,
         episodic_event_tokens=args.episodic_event_tokens,
         episodic_digest_tokens=args.episodic_digest_tokens,
-        semantic_tokens=0,
+        semantic_tokens=args.semantic_tokens if args.namespaces else 0,
         safety_margin_tokens=args.safety_margin_tokens,
     )
 
@@ -130,9 +202,10 @@ def _limits(args: argparse.Namespace) -> PromptLimits:
         maximum_episodic_digest_tokens=max(
             args.episodic_digest_tokens, 2000
         ),
-        maximum_semantic_tokens=1,
+        maximum_semantic_tokens=max(args.semantic_tokens, 1),
         maximum_events=20,
         maximum_digests=5,
+        maximum_semantic_documents=max(args.semantic_top_k, 1),
         maximum_item_chars=12000,
     )
 
@@ -184,23 +257,39 @@ def _render_json(
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     database = _database_path(args)
+    embedding_database = _embedding_database_path(args)
 
     if not database.is_file():
         print(f"error: SQLite database not found: {database}", file=sys.stderr)
         return 2
+    if args.namespaces and not embedding_database.is_file():
+        print(
+            f"error: embedding SQLite database not found: {embedding_database}",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
-        with SqliteEpisodicMemory(
-            database,
-            initialize_schema=False,
-        ) as episodic_memory:
+        with ExitStack() as resources:
+            episodic_memory = resources.enter_context(
+                SqliteEpisodicMemory(
+                    database,
+                    initialize_schema=False,
+                )
+            )
             session = _resolve_session(
                 episodic_memory,
                 account_name=args.account,
                 friendly_name=args.chat_name,
             )
+            semantic_memory = (
+                _semantic_memory(args, embedding_database, resources)
+                if args.namespaces
+                else None
+            )
             compiled = PromptCompiler(
                 episodic_memory=episodic_memory,
+                semantic_memory=semantic_memory,
             ).compile(
                 PromptRequest(
                     account_name=args.account,
@@ -208,15 +297,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     context_name=session.context_name or "",
                     current_input=args.request,
                     system_instructions=tuple(args.system),
+                    semantic_namespaces=tuple(args.namespaces),
                     include_procedural=False,
                     include_episodic=True,
-                    include_semantic=False,
+                    include_semantic=bool(args.namespaces),
                     include_digests=True,
                 ),
                 _budgets(args),
                 _limits(args),
             )
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
