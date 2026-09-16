@@ -379,6 +379,16 @@ def test_digest_threshold_drops_weak_archived_digest():
     ]
     assert len(digest_messages) == 1
     assert "Strong digest" in digest_messages[0].content
+    assert compiled.metrics.episodic_digests.retrieved_items == 2
+    assert compiled.metrics.episodic_digests.selected_items == 1
+    assert compiled.metrics.episodic_digests.dropped_items == 1
+    decisions = {
+        item.candidate_id: item for item in compiled.metrics.candidates
+    }
+    assert decisions["episodic:digest:weak:1"].drop_reason == (
+        "below_relevance_threshold"
+    )
+    assert decisions["episodic:digest:strong:2"].selected is True
 
 
 def test_semantic_policy_is_forwarded_and_item_size_is_bounded():
@@ -409,9 +419,46 @@ def test_semantic_policy_is_forwarded_and_item_size_is_bounded():
     semantic_message = next(
         item for item in compiled.messages if item.source == "semantic"
     )
-    assert semantic.request.score_threshold == 0.35
+    # Fetch the top candidates first so the compiler can report why a result
+    # fell below its own explicit threshold.
+    assert semantic.request.score_threshold == 0.0
     assert semantic.request.max_chars == 40
     assert len(semantic_message.content) <= 40
+
+
+def test_semantic_candidate_trace_explains_threshold_rejection():
+    semantic = FakeSemanticMemory(
+        [
+            SemanticDocument("weak", "Weak", "not relevant", score=0.2),
+            SemanticDocument("strong", "Strong", "useful note", score=0.8),
+        ]
+    )
+
+    compiled = PromptCompiler(
+        semantic_memory=semantic,
+        token_counter=WordCounter(),
+    ).compile(
+        PromptRequest(
+            account_name="acct",
+            current_input="question",
+            semantic_score_threshold=0.35,
+        ),
+        _budgets(),
+        _limits(),
+    )
+
+    assert compiled.metrics.semantic.retrieved_items == 2
+    assert compiled.metrics.semantic.selected_items == 1
+    assert compiled.metrics.semantic.dropped_items == 1
+    decisions = {
+        item.candidate_id: item for item in compiled.metrics.candidates
+    }
+    assert decisions["semantic:weak:1"].relevance == 0.2
+    assert decisions["semantic:weak:1"].drop_reason == (
+        "below_relevance_threshold"
+    )
+    assert decisions["semantic:strong:2"].selected is True
+    assert "not relevant" not in repr(compiled.metrics)
 
 
 @pytest.mark.parametrize(

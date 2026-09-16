@@ -164,8 +164,11 @@ def test_cli_semantic_namespaces_are_optional(tmp_path, capsys, monkeypatch):
     assert "A relevant semantic result." in captured.out
     assert requests[0].namespaces == ["vol_6", "vol_7", "documents"]
     assert requests[0].top_k == 3
-    assert requests[0].score_threshold == 0.30
+    assert requests[0].score_threshold == 0.0
     assert requests[0].max_chars == 1800
+    assert "--- Candidate decisions ---" in captured.out
+    assert "semantic:doc-1:1" in captured.out
+    assert "selected" in captured.out
 
 
 def test_cli_without_namespaces_does_not_build_semantic_memory(

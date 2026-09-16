@@ -256,6 +256,20 @@ def _render_text(
     database: Path,
     compiled,
 ) -> str:
+    candidate_rows = []
+    for item in compiled.metrics.candidates:
+        status = "selected" if item.selected else item.drop_reason
+        tokens = f"{item.final_tokens}/{item.original_tokens}"
+        candidate_rows.append(
+            f"{item.source:<18} {item.relevance:>6.3f} "
+            f"{status:<27} {tokens:>11}  {item.candidate_id}"
+        )
+    candidates = (
+        "source              score status                      tokens  id\n"
+        + "\n".join(candidate_rows)
+        if candidate_rows
+        else "No memory candidates were retrieved."
+    )
     metrics = json.dumps(
         asdict(compiled.metrics),
         indent=2,
@@ -267,6 +281,8 @@ def _render_text(
         f"Database: {database}\n\n"
         "--- Prompt ---\n"
         f"{compiled.text}\n\n"
+        "--- Candidate decisions ---\n"
+        f"{candidates}\n\n"
         "--- Metrics ---\n"
         f"{metrics}"
     )

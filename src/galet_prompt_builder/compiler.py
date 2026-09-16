@@ -33,7 +33,12 @@ from .errors import (
     PromptBudgetExceededError,
     PromptConfigurationError,
 )
-from .metrics import CompiledPrompt, PromptMetrics, SectionMetrics
+from .metrics import (
+    CandidateMetrics,
+    CompiledPrompt,
+    PromptMetrics,
+    SectionMetrics,
+)
 from .relevance import DeterministicRelevanceAssessor, RelevanceAssessor
 from .rendering import render_memory_messages
 
@@ -86,18 +91,29 @@ class PromptCompiler:
                 f"{usable_limit}"
             )
 
-        candidates = self._retrieve_candidates(request, limits)
+        retrieved = self._retrieve_candidates(request, limits)
+        candidates, rejected = self._apply_relevance_thresholds(
+            request, retrieved
+        )
         candidates = list(
             self.relevance_assessor.assess(
                 request.semantic_query or request.current_input,
                 candidates,
             )
         )
-        selected, section_metrics, warnings = self._select(
+        selected, section_metrics, warnings, candidate_metrics = self._select(
             candidates,
             budgets=budgets,
             limits=limits,
             global_tokens=usable_limit - fixed_tokens,
+        )
+        candidate_metrics.extend(
+            self._rejected_candidate_metrics(rejected, limits)
+        )
+        self._record_threshold_rejections(
+            rejected,
+            section_metrics=section_metrics,
+            warnings=warnings,
         )
         memory_messages = render_memory_messages(selected)
         messages = (
@@ -130,6 +146,7 @@ class PromptCompiler:
             semantic=section_metrics["semantic"],
             current_input=self._fixed_metrics(current_messages, limits),
             warnings=tuple(warnings),
+            candidates=tuple(candidate_metrics),
         )
         return CompiledPrompt(messages=messages, metrics=metrics)
 
@@ -267,8 +284,6 @@ class PromptCompiler:
             )
         if request.include_digests:
             for order, digest in enumerate(result.digests, start=1):
-                if digest.score < request.episodic_digest_score_threshold:
-                    continue
                 content = (
                     f"Relevant session digest ({digest.session_id}):\n"
                     f"{digest.snippet}"
@@ -300,7 +315,7 @@ class PromptCompiler:
                     namespaces=list(request.semantic_namespaces),
                     top_k=limits.maximum_semantic_documents,
                     max_chars=self._item_char_limit("semantic", limits),
-                    score_threshold=request.semantic_score_threshold,
+                    score_threshold=0.0,
                 )
             )
         except Exception as exc:
@@ -321,6 +336,63 @@ class PromptCompiler:
                 )
             )
         return output
+
+    @staticmethod
+    def _apply_relevance_thresholds(
+        request: PromptRequest,
+        candidates: Sequence[PromptCandidate],
+    ) -> tuple[list[PromptCandidate], list[PromptCandidate]]:
+        accepted: list[PromptCandidate] = []
+        rejected: list[PromptCandidate] = []
+        for item in candidates:
+            threshold = 0.0
+            if item.source == "semantic":
+                threshold = request.semantic_score_threshold
+            elif item.source == "episodic_digest":
+                threshold = request.episodic_digest_score_threshold
+            if not item.required and item.relevance < threshold:
+                rejected.append(item)
+            else:
+                accepted.append(item)
+        return accepted, rejected
+
+    def _rejected_candidate_metrics(
+        self,
+        candidates: Sequence[PromptCandidate],
+        limits: PromptLimits,
+    ) -> list[CandidateMetrics]:
+        return [
+            CandidateMetrics(
+                candidate_id=item.candidate_id,
+                source=item.source,
+                relevance=item.relevance,
+                original_tokens=self._candidate_tokens(item, limits),
+                selected=False,
+                truncated=item.truncated,
+                required=item.required,
+                drop_reason="below_relevance_threshold",
+            )
+            for item in candidates
+        ]
+
+    @staticmethod
+    def _record_threshold_rejections(
+        candidates: Sequence[PromptCandidate],
+        *,
+        section_metrics: dict[PromptSource, SectionMetrics],
+        warnings: list[str],
+    ) -> None:
+        for source in _SELECTION_ORDER:
+            count = sum(1 for item in candidates if item.source == source)
+            if not count:
+                continue
+            current = section_metrics[source]
+            section_metrics[source] = replace(
+                current,
+                retrieved_items=current.retrieved_items + count,
+                dropped_items=current.dropped_items + count,
+            )
+            warnings.append(f"{source}: below_relevance_threshold={count}")
 
     def _candidate(
         self,
@@ -413,7 +485,10 @@ class PromptCompiler:
         limits: PromptLimits,
         global_tokens: int,
     ) -> tuple[
-        list[PromptCandidate], dict[PromptSource, SectionMetrics], list[str]
+        list[PromptCandidate],
+        dict[PromptSource, SectionMetrics],
+        list[str],
+        list[CandidateMetrics],
     ]:
         section_budgets: dict[PromptSource, int] = {
             "procedural": budgets.procedural_tokens,
@@ -424,6 +499,7 @@ class PromptCompiler:
         selected: list[PromptCandidate] = []
         metrics: dict[PromptSource, SectionMetrics] = {}
         warnings: list[str] = []
+        candidate_metrics: list[CandidateMetrics] = []
         remaining_global = global_tokens
         for source in _SELECTION_ORDER:
             items = [item for item in candidates if item.source == source]
@@ -470,6 +546,32 @@ class PromptCompiler:
                     truncated += 1
                 break
             selected.extend(chosen)
+            chosen_by_id = {item.candidate_id: item for item in chosen}
+            for item in ranked:
+                final_item = chosen_by_id.get(item.candidate_id)
+                candidate_metrics.append(
+                    CandidateMetrics(
+                        candidate_id=item.candidate_id,
+                        source=item.source,
+                        relevance=item.relevance,
+                        original_tokens=self._candidate_tokens(item, limits),
+                        selected=final_item is not None,
+                        final_tokens=(
+                            self._candidate_tokens(final_item, limits)
+                            if final_item is not None
+                            else 0
+                        ),
+                        truncated=(
+                            final_item.truncated
+                            if final_item is not None
+                            else item.truncated
+                        ),
+                        required=item.required,
+                        drop_reason=(
+                            "" if final_item is not None else "token_budget"
+                        ),
+                    )
+                )
             remaining_global -= used
             dropped = len(items) - len(chosen)
             if dropped or truncated:
@@ -484,7 +586,7 @@ class PromptCompiler:
                 dropped_items=dropped,
                 truncated_items=truncated,
             )
-        return selected, metrics, warnings
+        return selected, metrics, warnings, candidate_metrics
 
     def _message_tokens(
         self, message: PromptMessage, limits: PromptLimits

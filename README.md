@@ -172,6 +172,14 @@ normal credential configuration or the directory passed to
 Procedural memory remains disabled until its context repository is configured
 explicitly.
 
+The text report includes a content-safe candidate decision table. It shows
+each candidate ID, source, raw relevance score, original/final token cost, and
+whether it was selected or rejected by the relevance threshold or token
+budget. The JSON report exposes the same data under `metrics.candidates`.
+Rejected candidates still count as retrieved and dropped in their section
+metrics, making threshold tuning visible without copying document or chat
+content into diagnostics.
+
 ## Dependency rule
 
 > Applications may depend on `galet-prompt-builder`; the package must never
