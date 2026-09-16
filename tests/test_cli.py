@@ -163,6 +163,9 @@ def test_cli_semantic_namespaces_are_optional(tmp_path, capsys, monkeypatch):
     assert result == 0
     assert "A relevant semantic result." in captured.out
     assert requests[0].namespaces == ["vol_6", "vol_7", "documents"]
+    assert requests[0].top_k == 3
+    assert requests[0].score_threshold == 0.30
+    assert requests[0].max_chars == 1800
 
 
 def test_cli_without_namespaces_does_not_build_semantic_memory(
@@ -186,3 +189,47 @@ def test_cli_without_namespaces_does_not_build_semantic_memory(
     )
 
     assert result == 0
+
+
+def test_cli_default_policy_limits_and_filters_episodic_events(
+    tmp_path, capsys
+):
+    database = _database(tmp_path)
+    with SqliteEpisodicMemory(database) as memory:
+        memory.add_events(
+            "session-123",
+            [
+                EpisodicEvent(
+                    "system",
+                    {"total": 6000},
+                    kind="prompt_report",
+                ),
+                *[
+                    EpisodicEvent(
+                        "user",
+                        f"Recent message {index}",
+                        kind="user_message",
+                    )
+                    for index in range(10)
+                ],
+            ],
+        )
+
+    result = main(
+        [
+            "Current question",
+            "--chat-name",
+            "Prompt Comparison",
+            "--storage-root",
+            str(tmp_path),
+            "--format",
+            "json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    contents = [item["content"] for item in payload["messages"]]
+    assert result == 0
+    assert not any("6000" in content for content in contents)
+    assert payload["metrics"]["episodic_events"]["retrieved_items"] == 6
