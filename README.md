@@ -60,6 +60,48 @@ The default relevance assessor is deterministic and makes no network calls.
 `GaletRelevanceAssessor` is available when an application explicitly wants an
 LLM-based assessment; all such calls go through Galet's `LLMApi`.
 
+
+## Prompt comparison CLI
+
+The installed `galet-prompt-run` command compiles a prompt from an existing
+Lucy chat and a new request. It resolves the chat's friendly name to its stored
+session ID and reads episodic history from Lucy's SQLite database.
+
+By default it reads:
+
+```text
+/home/junwin/lucy_storage/data/chat2.sqlite
+```
+
+Example:
+
+```bash
+galet-prompt-run \
+  "What should we do next?" \
+  --chat-name "Prompt Builder Work"
+```
+
+Use a different storage root or an explicit database when needed:
+
+```bash
+galet-prompt-run \
+  "Compare this prompt" \
+  --chat-name "Prompt Builder Work" \
+  --storage-root /srv/lucy_storage
+
+galet-prompt-run \
+  "Compare this prompt" \
+  --chat-name "Prompt Builder Work" \
+  --db /tmp/chat2.sqlite \
+  --format json
+```
+
+The command is read-only. It fails if the database or friendly chat name does
+not exist, and it reports duplicate friendly names instead of guessing. The
+initial runner includes episodic events and digests. Procedural and semantic
+memory remain disabled until their repositories and embedding credentials are
+configured explicitly.
+
 ## Dependency rule
 
 > Applications may depend on `galet-prompt-builder`; the package must never
