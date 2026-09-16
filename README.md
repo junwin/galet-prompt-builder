@@ -98,9 +98,29 @@ galet-prompt-run \
 
 The command is read-only. It fails if the database or friendly chat name does
 not exist, and it reports duplicate friendly names instead of guessing. The
-initial runner includes episodic events and digests. Procedural and semantic
-memory remain disabled until their repositories and embedding credentials are
-configured explicitly.
+runner includes episodic events and digests by default.
+
+Semantic recall is opt-in. Supply one or more namespaces to query Lucy's
+`embeddings-v2.sqlite` store:
+
+```bash
+galet-prompt-run \
+  "What did I write about attention?" \
+  --chat-name "Prompt Builder Work" \
+  --namespaces vol_6 vol_7 documents
+```
+
+With no `--namespaces`, the namespace list is empty and the runner does not
+open the embedding database or make an embedding API call. Semantic mode
+defaults to
+`/home/junwin/lucy_storage/data/embeddings-v2.sqlite`; use
+`--embedding-db` to override it and install the optional dependency with
+`pip install ".[semantic]"`. Galet supplies the query embedding, using its
+normal credential configuration or the directory passed to
+`--credential-path`.
+
+Procedural memory remains disabled until its context repository is configured
+explicitly.
 
 ## Dependency rule
 
