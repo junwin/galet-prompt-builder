@@ -28,7 +28,11 @@ from .contracts import (
     PromptRequest,
     PromptSource,
 )
-from .errors import MemoryRetrievalError, PromptBudgetExceededError
+from .errors import (
+    MemoryRetrievalError,
+    PromptBudgetExceededError,
+    PromptConfigurationError,
+)
 from .metrics import CompiledPrompt, PromptMetrics, SectionMetrics
 from .relevance import DeterministicRelevanceAssessor, RelevanceAssessor
 from .rendering import render_memory_messages
@@ -69,6 +73,7 @@ class PromptCompiler:
         limits: PromptLimits,
     ) -> CompiledPrompt:
         validate_budgets(budgets, limits)
+        self._validate_request(request)
         fixed_messages = self._fixed_messages(request)
         fixed_tokens = sum(
             self._message_tokens(message, limits) for message in fixed_messages
@@ -210,7 +215,14 @@ class PromptCompiler:
                     query=request.semantic_query or request.current_input,
                     max_events=limits.maximum_events,
                     digest_top_k=limits.maximum_digests,
-                    digest_max_chars=limits.maximum_item_chars,
+                    digest_max_chars=self._item_char_limit(
+                        "episodic_digest", limits
+                    ),
+                    event_kinds=(
+                        list(request.episodic_event_kinds)
+                        if request.episodic_event_kinds is not None
+                        else None
+                    ),
                     include_session_metadata=bool(request.conversation_id),
                     include_recent_history=bool(request.conversation_id),
                     include_archived_digests=request.include_digests,
@@ -219,7 +231,22 @@ class PromptCompiler:
         except Exception as exc:
             raise MemoryRetrievalError("episodic memory recall failed") from exc
         output: list[PromptCandidate] = []
+        allowed_event_kinds = (
+            set(request.episodic_event_kinds)
+            if request.episodic_event_kinds is not None
+            else None
+        )
         for order, event in enumerate(result.events, start=1):
+            if (
+                allowed_event_kinds is not None
+                and event.kind not in allowed_event_kinds
+            ):
+                continue
+            if (
+                not request.include_structured_episodic_events
+                and not isinstance(event.content, str)
+            ):
+                continue
             content = self._content_text(event.content)
             if not content.strip():
                 continue
@@ -240,6 +267,8 @@ class PromptCompiler:
             )
         if request.include_digests:
             for order, digest in enumerate(result.digests, start=1):
+                if digest.score < request.episodic_digest_score_threshold:
+                    continue
                 content = (
                     f"Relevant session digest ({digest.session_id}):\n"
                     f"{digest.snippet}"
@@ -270,8 +299,8 @@ class PromptCompiler:
                     query=query,
                     namespaces=list(request.semantic_namespaces),
                     top_k=limits.maximum_semantic_documents,
-                    max_chars=limits.maximum_item_chars,
-                    score_threshold=0.0,
+                    max_chars=self._item_char_limit("semantic", limits),
+                    score_threshold=request.semantic_score_threshold,
                 )
             )
         except Exception as exc:
@@ -305,13 +334,14 @@ class PromptCompiler:
         required: bool = False,
         order: int = 0,
     ) -> PromptCandidate:
-        truncated = len(content) > limits.maximum_item_chars
+        maximum_chars = self._item_char_limit(source, limits)
+        truncated = len(content) > maximum_chars
         return PromptCandidate(
             candidate_id=candidate_id,
             source=source,
             role=role,
             content=(
-                content[: max(0, limits.maximum_item_chars - 1)].rstrip()
+                content[: max(0, maximum_chars - 1)].rstrip()
                 + "…"
                 if truncated
                 else content
@@ -321,6 +351,36 @@ class PromptCompiler:
             order=order,
             truncated=truncated,
         )
+
+    @staticmethod
+    def _item_char_limit(
+        source: PromptSource, limits: PromptLimits
+    ) -> int:
+        overrides = {
+            "episodic_event": limits.maximum_episodic_event_chars,
+            "episodic_digest": limits.maximum_episodic_digest_chars,
+            "semantic": limits.maximum_semantic_item_chars,
+        }
+        return overrides.get(source) or limits.maximum_item_chars
+
+    @staticmethod
+    def _validate_request(request: PromptRequest) -> None:
+        thresholds = {
+            "semantic_score_threshold": request.semantic_score_threshold,
+            "episodic_digest_score_threshold": (
+                request.episodic_digest_score_threshold
+            ),
+        }
+        invalid = [
+            name
+            for name, value in thresholds.items()
+            if value < 0.0 or value > 1.0
+        ]
+        if invalid:
+            raise PromptConfigurationError(
+                "relevance thresholds must be between 0.0 and 1.0: "
+                + ", ".join(invalid)
+            )
 
     def _deduplicate_digests(
         self, candidates: Sequence[PromptCandidate]
