@@ -16,6 +16,7 @@ from galet_prompt_builder import (
     PromptBudgetExceededError,
     PromptBudgets,
     PromptCompiler,
+    PromptConfigurationError,
     PromptLimits,
     PromptRequest,
 )
@@ -301,3 +302,136 @@ def test_metrics_do_not_copy_memory_content():
         _limits(),
     )
     assert "Earlier question" not in repr(compiled.metrics)
+
+
+def test_episodic_policy_filters_event_kinds_and_structured_payloads():
+    result = EpisodicMemoryResult(
+        session_id="session",
+        events=[
+            EpisodicEvent(
+                "user", "Keep this", kind="user_message", event_id="e1"
+            ),
+            EpisodicEvent(
+                "system",
+                {"total": 6000},
+                kind="prompt_report",
+                event_id="e2",
+            ),
+            EpisodicEvent(
+                "assistant",
+                {"tool_name": "delegate_task"},
+                kind="assistant_message",
+                event_id="e3",
+            ),
+        ],
+    )
+    episodic = FakeEpisodicMemory(result)
+
+    compiled = PromptCompiler(
+        episodic_memory=episodic,
+        token_counter=WordCounter(),
+    ).compile(
+        PromptRequest(
+            account_name="acct",
+            current_input="question",
+            episodic_event_kinds=("user_message", "assistant_message"),
+            include_structured_episodic_events=False,
+        ),
+        _budgets(),
+        _limits(maximum_events=6),
+    )
+
+    episodic_messages = [
+        item for item in compiled.messages if item.source == "episodic_event"
+    ]
+    assert [item.content for item in episodic_messages] == ["Keep this"]
+    assert episodic.request.max_events == 6
+    assert episodic.request.event_kinds == [
+        "user_message",
+        "assistant_message",
+    ]
+
+
+def test_digest_threshold_drops_weak_archived_digest():
+    result = EpisodicMemoryResult(
+        session_id="session",
+        digests=[
+            EpisodicDigest("weak", "Weak digest", 0.29),
+            EpisodicDigest("strong", "Strong digest", 0.75),
+        ],
+    )
+
+    compiled = PromptCompiler(
+        episodic_memory=FakeEpisodicMemory(result),
+        token_counter=WordCounter(),
+    ).compile(
+        PromptRequest(
+            account_name="acct",
+            current_input="question",
+            episodic_digest_score_threshold=0.4,
+        ),
+        _budgets(),
+        _limits(),
+    )
+
+    digest_messages = [
+        item for item in compiled.messages if item.source == "episodic_digest"
+    ]
+    assert len(digest_messages) == 1
+    assert "Strong digest" in digest_messages[0].content
+
+
+def test_semantic_policy_is_forwarded_and_item_size_is_bounded():
+    semantic = FakeSemanticMemory(
+        [
+            SemanticDocument(
+                "doc",
+                "Title",
+                "x" * 100,
+                score=0.9,
+            )
+        ]
+    )
+
+    compiled = PromptCompiler(
+        semantic_memory=semantic,
+        token_counter=CharacterCounter(),
+    ).compile(
+        PromptRequest(
+            account_name="acct",
+            current_input="question",
+            semantic_score_threshold=0.35,
+        ),
+        _budgets(),
+        _limits(maximum_semantic_item_chars=40),
+    )
+
+    semantic_message = next(
+        item for item in compiled.messages if item.source == "semantic"
+    )
+    assert semantic.request.score_threshold == 0.35
+    assert semantic.request.max_chars == 40
+    assert len(semantic_message.content) <= 40
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("semantic_score_threshold", -0.1),
+        ("semantic_score_threshold", 1.1),
+        ("episodic_digest_score_threshold", -0.1),
+        ("episodic_digest_score_threshold", 1.1),
+    ],
+)
+def test_relevance_thresholds_must_be_probabilities(field, value):
+    values = {
+        "account_name": "acct",
+        "current_input": "question",
+        field: value,
+    }
+    with pytest.raises(PromptConfigurationError, match=field):
+        PromptCompiler().compile(
+            PromptRequest(**values),
+            _budgets(),
+            _limits(),
+        )

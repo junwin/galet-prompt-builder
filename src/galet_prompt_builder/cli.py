@@ -91,10 +91,48 @@ def _parser() -> argparse.ArgumentParser:
         dest="output_format",
     )
     parser.add_argument("--total-tokens", type=int, default=8000)
-    parser.add_argument("--episodic-event-tokens", type=int, default=3000)
-    parser.add_argument("--episodic-digest-tokens", type=int, default=1000)
-    parser.add_argument("--semantic-tokens", type=int, default=2000)
-    parser.add_argument("--semantic-top-k", type=int, default=5)
+    parser.add_argument("--episodic-event-tokens", type=int, default=1000)
+    parser.add_argument("--episodic-digest-tokens", type=int, default=500)
+    parser.add_argument("--semantic-tokens", type=int, default=1000)
+    parser.add_argument("--max-events", type=int, default=6)
+    parser.add_argument("--max-digests", type=int, default=2)
+    parser.add_argument("--semantic-top-k", type=int, default=3)
+    parser.add_argument(
+        "--event-kinds",
+        nargs="*",
+        default=["user_message", "assistant_message", "session_digest"],
+        help="Episodic event kinds to include",
+    )
+    parser.add_argument(
+        "--include-structured-events",
+        action="store_true",
+        help="Include structured tool-call and operational event payloads",
+    )
+    parser.add_argument(
+        "--semantic-score-threshold",
+        type=float,
+        default=0.30,
+    )
+    parser.add_argument(
+        "--digest-score-threshold",
+        type=float,
+        default=0.40,
+    )
+    parser.add_argument(
+        "--episodic-event-max-chars",
+        type=int,
+        default=4000,
+    )
+    parser.add_argument(
+        "--episodic-digest-max-chars",
+        type=int,
+        default=1800,
+    )
+    parser.add_argument(
+        "--semantic-item-max-chars",
+        type=int,
+        default=1800,
+    )
     parser.add_argument("--safety-margin-tokens", type=int, default=500)
     return parser
 
@@ -194,19 +232,20 @@ def _budgets(args: argparse.Namespace) -> PromptBudgets:
 
 def _limits(args: argparse.Namespace) -> PromptLimits:
     return PromptLimits(
-        maximum_total_tokens=max(args.total_tokens, 16000),
+        maximum_total_tokens=args.total_tokens,
         maximum_procedural_tokens=1,
-        maximum_episodic_event_tokens=max(
-            args.episodic_event_tokens, 6000
-        ),
+        maximum_episodic_event_tokens=max(args.episodic_event_tokens, 1),
         maximum_episodic_digest_tokens=max(
-            args.episodic_digest_tokens, 2000
+            args.episodic_digest_tokens, 1
         ),
         maximum_semantic_tokens=max(args.semantic_tokens, 1),
-        maximum_events=20,
-        maximum_digests=5,
+        maximum_events=args.max_events,
+        maximum_digests=args.max_digests,
         maximum_semantic_documents=max(args.semantic_top_k, 1),
         maximum_item_chars=12000,
+        maximum_episodic_event_chars=args.episodic_event_max_chars,
+        maximum_episodic_digest_chars=args.episodic_digest_max_chars,
+        maximum_semantic_item_chars=args.semantic_item_max_chars,
     )
 
 
@@ -298,6 +337,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     current_input=args.request,
                     system_instructions=tuple(args.system),
                     semantic_namespaces=tuple(args.namespaces),
+                    semantic_score_threshold=(
+                        args.semantic_score_threshold
+                    ),
+                    episodic_event_kinds=tuple(args.event_kinds),
+                    include_structured_episodic_events=(
+                        args.include_structured_events
+                    ),
+                    episodic_digest_score_threshold=(
+                        args.digest_score_threshold
+                    ),
                     include_procedural=False,
                     include_episodic=True,
                     include_semantic=bool(args.namespaces),

@@ -64,6 +64,18 @@ def validate_budgets(budgets: PromptBudgets, limits: PromptLimits) -> None:
         "maximum_semantic_documents": limits.maximum_semantic_documents,
         "maximum_item_chars": limits.maximum_item_chars,
     }
+    optional_limit_values = {
+        "maximum_episodic_event_chars": limits.maximum_episodic_event_chars,
+        "maximum_episodic_digest_chars": limits.maximum_episodic_digest_chars,
+        "maximum_semantic_item_chars": limits.maximum_semantic_item_chars,
+    }
+    limit_values.update(
+        {
+            name: value
+            for name, value in optional_limit_values.items()
+            if value is not None
+        }
+    )
     non_positive = [name for name, value in limit_values.items() if value <= 0]
     if non_positive:
         raise PromptConfigurationError(
