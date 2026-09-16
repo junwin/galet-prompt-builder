@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
+semantic = ["sqlite-vec>=0.1.9"]
 
 [project.scripts]
 galet-prompt-run = "galet_prompt_builder.cli:main"
