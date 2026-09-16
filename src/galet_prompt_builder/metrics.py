@@ -2,7 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .contracts import PromptMessage
+from .contracts import PromptMessage, PromptSource
+
+
+@dataclass(frozen=True)
+class CandidateMetrics:
+    candidate_id: str
+    source: PromptSource
+    relevance: float
+    original_tokens: int
+    selected: bool
+    final_tokens: int = 0
+    truncated: bool = False
+    required: bool = False
+    drop_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -27,6 +40,7 @@ class PromptMetrics:
     semantic: SectionMetrics
     current_input: SectionMetrics
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    candidates: tuple[CandidateMetrics, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -45,4 +59,9 @@ class CompiledPrompt:
         return render_prompt_text(self.messages)
 
 
-__all__ = ["CompiledPrompt", "PromptMetrics", "SectionMetrics"]
+__all__ = [
+    "CandidateMetrics",
+    "CompiledPrompt",
+    "PromptMetrics",
+    "SectionMetrics",
+]
