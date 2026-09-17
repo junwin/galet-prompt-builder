@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "galet @ git+https://github.com/junwin/galet.git@cd73d43729f9ba7b88096902efd677181283d12d",
-    "galet-memory @ git+https://github.com/junwin/galet-memory.git@0e2240cf09c2c30e0a7e20b5ce55ca8b50b497f9",
+    "galet-memory @ git+https://github.com/junwin/galet-memory.git@74f82530e31f26e6ce20628288ac6fc6a5ab0205",
 ]
 
 [project.optional-dependencies]
