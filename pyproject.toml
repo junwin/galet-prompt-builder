@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "galet-prompt-builder"
-version = "0.1.0"
+version = "0.1.1"
 description = "Provider-neutral, memory-aware prompt compilation"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,7 +12,7 @@ license = "MIT"
 authors = [{ name = "junwin", email = "jdunwin@gmail.com" }]
 keywords = ["prompt", "llm", "memory", "prompt-builder"]
 dependencies = [
-    "galet>=0.1.1",
+    "galet>=0.1.2",
     "galet-memory>=0.1.0",
 ]
 classifiers = [
