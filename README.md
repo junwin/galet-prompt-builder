@@ -160,8 +160,12 @@ galet-prompt-run \
   --semantic-item-max-chars 1800
 ```
 
-With no `--namespaces`, the namespace list is empty and the runner does not
-open the embedding database or make an embedding API call. Semantic mode
+With no `--namespaces`, document semantic recall is disabled. When the
+embedding database exists, the runner can still query its `digests` namespace
+for archived, published session digests. A `session_digest` event in the
+current chat appears as an episodic event; it does not by itself create an
+archived digest candidate. Archives must be published with an embedding and
+readable digest document to be recalled from other sessions. Semantic mode
 defaults to
 `/home/junwin/lucy_storage/data/embeddings-v2.sqlite`; use
 `--embedding-db` to override it and install the optional dependency with

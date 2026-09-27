@@ -142,7 +142,7 @@ def test_cli_semantic_namespaces_are_optional(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(
         cli_module,
         "_semantic_memory",
-        lambda args, database, resources: FakeSemanticMemory(),
+        lambda args, database, resources: (FakeSemanticMemory(), None),
     )
 
     result = main(
@@ -169,6 +169,33 @@ def test_cli_semantic_namespaces_are_optional(tmp_path, capsys, monkeypatch):
     assert "--- Candidate decisions ---" in captured.out
     assert "semantic:doc-1:1" in captured.out
     assert "selected" in captured.out
+
+
+def test_cli_passes_archived_digest_recall_to_episodic_memory(
+    tmp_path, capsys, monkeypatch
+):
+    _database(tmp_path)
+    (tmp_path / "data" / "embeddings-v2.sqlite").touch()
+
+    def recalled(request):
+        from galet_memory import EpisodicDigest
+
+        return [EpisodicDigest("older-session", "Attention is a practice.", 0.8)]
+
+    monkeypatch.setattr(
+        cli_module, "_semantic_memory",
+        lambda args, database, resources: (None, recalled),
+    )
+    result = main([
+        "What did I write about attention?", "--chat-name", "Prompt Comparison",
+        "--storage-root", str(tmp_path), "--format", "json",
+    ])
+    payload = json.loads(capsys.readouterr().out)
+    assert result == 0
+    assert payload["metrics"]["episodic_digests"]["retrieved_items"] == 1
+    assert payload["metrics"]["episodic_digests"]["selected_items"] == 1
+    assert any("Attention is a practice." in message["content"]
+               for message in payload["messages"])
 
 
 def test_cli_without_namespaces_does_not_build_semantic_memory(
