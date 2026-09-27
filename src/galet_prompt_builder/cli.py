@@ -161,12 +161,12 @@ def _semantic_memory(
     args: argparse.Namespace,
     database: Path,
     resources: ExitStack,
-) -> Any:
+) -> tuple[Any, Any]:
     from galet.embedding_router import EmbeddingRouter
     from galet.mistral_embedding import MistralEmbeddingApi
     from galet.openai_embedding import OpenAIEmbeddingApi
     from galet.settings import Settings
-    from galet_memory import VectorSemanticMemory
+    from galet_memory import EmbeddingDigestRecall, VectorSemanticMemory
     from galet_memory.galet_adapter import GaletEmbeddingProvider
     from galet_memory.ports import FileTextLoader, SqliteVecEmbeddingIndex
 
@@ -184,10 +184,14 @@ def _semantic_memory(
             initialize_schema=False,
         )
     )
-    return VectorSemanticMemory(
+    loader = FileTextLoader()
+    semantic = VectorSemanticMemory(
         embeddings=embeddings,
         index=index,
-        text_loader=FileTextLoader(),
+        text_loader=loader,
+    )
+    return semantic, EmbeddingDigestRecall(
+        embeddings=embeddings, index=index, text_loader=loader,
     )
 
 
@@ -326,10 +330,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         with ExitStack() as resources:
+            semantic_memory, digest_recall = (
+                _semantic_memory(args, embedding_database, resources)
+                if embedding_database.is_file() else (None, None)
+            )
             episodic_memory = resources.enter_context(
                 SqliteEpisodicMemory(
                     database,
                     initialize_schema=False,
+                    digest_recall=digest_recall,
                 )
             )
             session = _resolve_session(
@@ -337,14 +346,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 account_name=args.account,
                 friendly_name=args.chat_name,
             )
-            semantic_memory = (
-                _semantic_memory(args, embedding_database, resources)
-                if args.namespaces
-                else None
-            )
             compiled = PromptCompiler(
                 episodic_memory=episodic_memory,
-                semantic_memory=semantic_memory,
+                semantic_memory=semantic_memory if args.namespaces else None,
             ).compile(
                 PromptRequest(
                     account_name=args.account,
