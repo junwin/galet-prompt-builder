@@ -183,6 +183,7 @@ class PromptCompiler:
                 ProceduralMemoryRequest(
                     account_name=request.account_name,
                     context_name=request.context_name,
+                    project_name=request.project_name,
                     create_if_missing=False,
                     include_resolved_text=True,
                     include_skills=True,
@@ -192,7 +193,7 @@ class PromptCompiler:
         except Exception as exc:
             raise MemoryRetrievalError("procedural memory recall failed") from exc
         output: list[PromptCandidate] = []
-        context_text = result.resolved_text or result.text
+        context_text = result.text or result.resolved_text
         if context_text.strip():
             output.append(
                 self._candidate(
