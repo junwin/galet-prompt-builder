@@ -81,6 +81,64 @@ def test_cli_json_output_contains_provider_messages(tmp_path, capsys):
     }
 
 
+def test_cli_loads_named_project_context_and_skill(tmp_path, capsys):
+    _database(tmp_path)
+    from galet_memory import FileProceduralMemory, ProceduralLayout
+
+    memory = FileProceduralMemory(tmp_path / "data", ProceduralLayout.lucy())
+    memory.repository.save_skill(
+        account_name="junwin", skill_name="testing", text="Run focused tests.",
+    )
+    memory.repository.save_context(
+        account_name="junwin", context_name="galet-memory",
+        text="Use galet-memory APIs for storage.",
+        frontmatter={"imports": ["testing"]},
+    )
+    result = main([
+        "What next?", "--chat-name", "Prompt Comparison",
+        "--storage-root", str(tmp_path), "--context-name", "galet-memory",
+        "--procedural-tokens", "300", "--format", "json",
+    ])
+    payload = json.loads(capsys.readouterr().out)
+    assert result == 0
+    contents = [item["content"] for item in payload["messages"]]
+    assert any("Use galet-memory APIs for storage." in text for text in contents)
+    assert sum("Run focused tests." in text for text in contents) == 1
+    assert payload["metrics"]["procedural"]["selected_items"] == 2
+
+
+def test_cli_reports_explicit_missing_context(tmp_path, capsys):
+    _database(tmp_path)
+    assert main([
+        "What next?", "--chat-name", "Prompt Comparison",
+        "--storage-root", str(tmp_path), "--context-name", "galet-memory",
+    ]) == 2
+    assert "project context 'galet-memory' not found" in capsys.readouterr().err
+
+
+def test_cli_loads_scoped_project_context(tmp_path, capsys):
+    _database(tmp_path)
+    from galet_memory import FileProceduralMemory
+
+    memory = FileProceduralMemory(tmp_path / "procedural")
+    memory.repository.save_context(
+        account_name="junwin", project_name="galet-memory",
+        scope="project", context_name="development",
+        text="Keep storage behavior inside galet-memory.",
+    )
+    result = main([
+        "What next?", "--chat-name", "Prompt Comparison",
+        "--storage-root", str(tmp_path), "--context-name", "development",
+        "--procedural-root", str(tmp_path / "procedural"),
+        "--procedural-layout", "scoped", "--project-name", "galet-memory",
+        "--format", "json",
+    ])
+    payload = json.loads(capsys.readouterr().out)
+    assert result == 0
+    assert any("Keep storage behavior inside galet-memory." in item["content"]
+               for item in payload["messages"])
+
+
 def test_cli_reports_unknown_chat_without_creating_storage(tmp_path, capsys):
     database = _database(tmp_path)
 
