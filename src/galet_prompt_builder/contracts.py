@@ -21,6 +21,7 @@ class PromptRequest:
     system_instructions: Sequence[str] = field(default_factory=tuple)
     conversation_id: str = ""
     context_name: str = ""
+    project_name: str = ""
     semantic_query: str = ""
     semantic_namespaces: Sequence[str] = field(
         default_factory=lambda: ("external",)
