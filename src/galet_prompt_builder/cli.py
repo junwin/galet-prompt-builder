@@ -11,6 +11,8 @@ from typing import Any, Sequence
 from galet_memory import (
     EpisodicSession,
     EpisodicSessionQuery,
+    FileProceduralMemory,
+    ProceduralLayout,
     SqliteEpisodicMemory,
 )
 
@@ -37,6 +39,22 @@ def _parser() -> argparse.ArgumentParser:
         help="Exact friendly name of the existing chat session",
     )
     parser.add_argument("--account", default=DEFAULT_ACCOUNT)
+    parser.add_argument(
+        "--context-name",
+        help="Project context to load; defaults to the chat's stored context name",
+    )
+    parser.add_argument(
+        "--project-name", default="",
+        help="Project scope when using the scoped procedural layout",
+    )
+    parser.add_argument(
+        "--procedural-root", type=Path,
+        help="Directory containing procedural contexts and skills (default: storage root/namespace)",
+    )
+    parser.add_argument(
+        "--procedural-layout", choices=("lucy", "scoped"), default="lucy",
+        help="Context and skill directory layout (default: lucy)",
+    )
     parser.add_argument(
         "--storage-root",
         type=Path,
@@ -91,6 +109,7 @@ def _parser() -> argparse.ArgumentParser:
         dest="output_format",
     )
     parser.add_argument("--total-tokens", type=int, default=8000)
+    parser.add_argument("--procedural-tokens", type=int, default=1000)
     parser.add_argument("--episodic-event-tokens", type=int, default=1000)
     parser.add_argument("--episodic-digest-tokens", type=int, default=500)
     parser.add_argument("--semantic-tokens", type=int, default=1000)
@@ -155,6 +174,12 @@ def _embedding_database_path(args: argparse.Namespace) -> Path:
         / args.storage_namespace
         / "embeddings-v2.sqlite"
     )
+
+
+def _procedural_memory(args: argparse.Namespace) -> FileProceduralMemory:
+    root = args.procedural_root or args.storage_root / args.storage_namespace
+    layout = ProceduralLayout.lucy() if args.procedural_layout == "lucy" else ProceduralLayout()
+    return FileProceduralMemory(root.expanduser(), layout)
 
 
 def _semantic_memory(
@@ -226,7 +251,7 @@ def _resolve_session(
 def _budgets(args: argparse.Namespace) -> PromptBudgets:
     return PromptBudgets(
         total_tokens=args.total_tokens,
-        procedural_tokens=0,
+        procedural_tokens=args.procedural_tokens,
         episodic_event_tokens=args.episodic_event_tokens,
         episodic_digest_tokens=args.episodic_digest_tokens,
         semantic_tokens=args.semantic_tokens if args.namespaces else 0,
@@ -237,7 +262,7 @@ def _budgets(args: argparse.Namespace) -> PromptBudgets:
 def _limits(args: argparse.Namespace) -> PromptLimits:
     return PromptLimits(
         maximum_total_tokens=args.total_tokens,
-        maximum_procedural_tokens=1,
+        maximum_procedural_tokens=max(args.procedural_tokens, 1),
         maximum_episodic_event_tokens=max(args.episodic_event_tokens, 1),
         maximum_episodic_digest_tokens=max(
             args.episodic_digest_tokens, 1
@@ -346,14 +371,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 account_name=args.account,
                 friendly_name=args.chat_name,
             )
+            context_name = args.context_name if args.context_name is not None else (session.context_name or "")
+            procedural_memory = _procedural_memory(args)
+            if args.context_name and procedural_memory.repository.resolve(args.account, context_name, args.project_name) is None:
+                raise ValueError(f"project context {context_name!r} not found under {procedural_memory.repository.root}")
             compiled = PromptCompiler(
                 episodic_memory=episodic_memory,
                 semantic_memory=semantic_memory if args.namespaces else None,
+                procedural_memory=procedural_memory,
             ).compile(
                 PromptRequest(
                     account_name=args.account,
                     conversation_id=session.session_id,
-                    context_name=session.context_name or "",
+                    context_name=context_name,
+                    project_name=args.project_name,
                     current_input=args.request,
                     system_instructions=tuple(args.system),
                     semantic_namespaces=tuple(args.namespaces),
@@ -367,7 +398,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     episodic_digest_score_threshold=(
                         args.digest_score_threshold
                     ),
-                    include_procedural=False,
+                    include_procedural=bool(context_name and args.procedural_tokens),
                     include_episodic=True,
                     include_semantic=bool(args.namespaces),
                     include_digests=True,
