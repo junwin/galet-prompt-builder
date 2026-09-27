@@ -120,6 +120,25 @@ The command is read-only. It fails if the database or friendly chat name does
 not exist, and it reports duplicate friendly names instead of guessing. The
 runner includes episodic events and digests by default.
 
+The runner also loads the chat's stored project context, if present, from
+`<storage-root>/<storage-namespace>/contexts/<account>/<context-name>.md`.
+Imported skills come from the sibling `skills/<account>` directory. To try a
+different named context, override the chat's value explicitly:
+
+```bash
+galet-prompt-run "What should we do next?" \
+  --chat-name "Prompt Builder Work" \
+  --context-name galet-memory \
+  --procedural-tokens 1000
+```
+
+Use `--procedural-root /path/to/root` when the contexts and skills live
+elsewhere. Use `--procedural-layout scoped` for galet-memory's global/account/
+project directory layout, and `--project-name` to include a project scope.
+An explicitly named context that is missing produces
+an error; recall never creates a file. Set `--procedural-tokens 0` to omit
+procedural content for a comparison run.
+
 Semantic recall is opt-in. Supply one or more namespaces to query Lucy's
 `embeddings-v2.sqlite` store:
 
@@ -133,6 +152,7 @@ galet-prompt-run \
 The comparison runner uses deliberately compact defaults:
 
 - 8,000 total tokens with a 500-token safety margin
+- 1,000 project-context and skill tokens
 - 1,000 recent-event tokens across at most 6 events
 - 500 digest tokens across at most 2 digests
 - 1,000 semantic tokens across at most 3 documents
@@ -172,9 +192,6 @@ defaults to
 `pip install ".[semantic]"`. Galet supplies the query embedding, using its
 normal credential configuration or the directory passed to
 `--credential-path`.
-
-Procedural memory remains disabled until its context repository is configured
-explicitly.
 
 The text report includes a content-safe candidate decision table. It shows
 each candidate ID, source, raw relevance score, original/final token cost, and
