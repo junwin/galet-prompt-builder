@@ -80,6 +80,31 @@ overall and per-section token budgets, retrieval counts, event kinds, relevance
 thresholds, and per-item character caps. An agent may supply system
 instructions, but no agent object or application policy is required.
 
+Applications can pass the same knobs used by `galet-prompt-run` through
+`PromptPolicy`, without constructing budgets and limits themselves:
+
+```python
+from galet_prompt_builder import PromptCompiler, PromptPolicy, PromptRequest
+
+compiled = PromptCompiler(
+    episodic_memory=episodic_memory,
+    semantic_memory=semantic_memory,
+    procedural_memory=procedural_memory,
+).build(
+    PromptRequest(account_name="junwin", current_input=question,
+                  conversation_id=session_id, context_name="skinny",
+                  semantic_namespaces=("books", "vol_6", "vol_7", "documents")),
+    PromptPolicy(total_tokens=6000, safety_margin_tokens=500,
+                 procedural_tokens=300, episodic_event_tokens=800,
+                 episodic_digest_tokens=400, semantic_tokens=900,
+                 maximum_events=6, maximum_digests=2,
+                 maximum_semantic_documents=3,
+                 digest_score_threshold=0.45,
+                 semantic_score_threshold=0.35,
+                 semantic_item_max_chars=1800),
+)
+```
+
 
 ## Prompt comparison CLI
 
