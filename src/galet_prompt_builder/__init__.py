@@ -18,6 +18,7 @@ from .errors import (
     RelevanceAssessmentError,
 )
 from .metrics import CompiledPrompt, PromptMetrics, SectionMetrics
+from .policy import PromptPolicy
 from .relevance import (
     DeterministicRelevanceAssessor,
     GaletRelevanceAssessor,
@@ -41,6 +42,7 @@ __all__ = [
     "PromptConfigurationError",
     "PromptLimits",
     "PromptMessage",
+    "PromptPolicy",
     "PromptMetrics",
     "PromptRequest",
     "PromptSource",
