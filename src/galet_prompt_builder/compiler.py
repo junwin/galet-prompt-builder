@@ -39,6 +39,7 @@ from .metrics import (
     PromptMetrics,
     SectionMetrics,
 )
+from .policy import PromptPolicy
 from .relevance import DeterministicRelevanceAssessor, RelevanceAssessor
 from .rendering import render_memory_messages
 
@@ -149,6 +150,16 @@ class PromptCompiler:
             candidates=tuple(candidate_metrics),
         )
         return CompiledPrompt(messages=messages, metrics=metrics)
+
+    def build(self, request: PromptRequest, policy: PromptPolicy) -> CompiledPrompt:
+        """Compile a request using one set of policy knobs."""
+        configured = replace(
+            request,
+            semantic_score_threshold=policy.semantic_score_threshold,
+            episodic_digest_score_threshold=policy.digest_score_threshold,
+        )
+        return self.compile(configured, policy.budgets(include_semantic=request.include_semantic),
+                            policy.limits())
 
     def _fixed_messages(self, request: PromptRequest) -> list[PromptMessage]:
         messages = [
