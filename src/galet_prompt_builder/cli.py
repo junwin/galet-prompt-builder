@@ -17,7 +17,8 @@ from galet_memory import (
 )
 
 from .compiler import PromptCompiler
-from .contracts import PromptBudgets, PromptLimits, PromptRequest
+from .contracts import PromptRequest
+from .policy import PromptPolicy
 
 
 DEFAULT_STORAGE_ROOT = Path("/home/junwin/lucy_storage")
@@ -248,36 +249,6 @@ def _resolve_session(
     return matches[0]
 
 
-def _budgets(args: argparse.Namespace) -> PromptBudgets:
-    return PromptBudgets(
-        total_tokens=args.total_tokens,
-        procedural_tokens=args.procedural_tokens,
-        episodic_event_tokens=args.episodic_event_tokens,
-        episodic_digest_tokens=args.episodic_digest_tokens,
-        semantic_tokens=args.semantic_tokens if args.namespaces else 0,
-        safety_margin_tokens=args.safety_margin_tokens,
-    )
-
-
-def _limits(args: argparse.Namespace) -> PromptLimits:
-    return PromptLimits(
-        maximum_total_tokens=args.total_tokens,
-        maximum_procedural_tokens=max(args.procedural_tokens, 1),
-        maximum_episodic_event_tokens=max(args.episodic_event_tokens, 1),
-        maximum_episodic_digest_tokens=max(
-            args.episodic_digest_tokens, 1
-        ),
-        maximum_semantic_tokens=max(args.semantic_tokens, 1),
-        maximum_events=args.max_events,
-        maximum_digests=args.max_digests,
-        maximum_semantic_documents=max(args.semantic_top_k, 1),
-        maximum_item_chars=12000,
-        maximum_episodic_event_chars=args.episodic_event_max_chars,
-        maximum_episodic_digest_chars=args.episodic_digest_max_chars,
-        maximum_semantic_item_chars=args.semantic_item_max_chars,
-    )
-
-
 def _render_text(
     *,
     chat_name: str,
@@ -379,7 +350,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 episodic_memory=episodic_memory,
                 semantic_memory=semantic_memory if args.namespaces else None,
                 procedural_memory=procedural_memory,
-            ).compile(
+            ).build(
                 PromptRequest(
                     account_name=args.account,
                     conversation_id=session.session_id,
@@ -388,23 +359,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                     current_input=args.request,
                     system_instructions=tuple(args.system),
                     semantic_namespaces=tuple(args.namespaces),
-                    semantic_score_threshold=(
-                        args.semantic_score_threshold
-                    ),
                     episodic_event_kinds=tuple(args.event_kinds),
                     include_structured_episodic_events=(
                         args.include_structured_events
-                    ),
-                    episodic_digest_score_threshold=(
-                        args.digest_score_threshold
                     ),
                     include_procedural=bool(context_name and args.procedural_tokens),
                     include_episodic=True,
                     include_semantic=bool(args.namespaces),
                     include_digests=True,
                 ),
-                _budgets(args),
-                _limits(args),
+                PromptPolicy(
+                    total_tokens=args.total_tokens,
+                    safety_margin_tokens=args.safety_margin_tokens,
+                    procedural_tokens=args.procedural_tokens,
+                    episodic_event_tokens=args.episodic_event_tokens,
+                    episodic_digest_tokens=args.episodic_digest_tokens,
+                    semantic_tokens=args.semantic_tokens,
+                    maximum_events=args.max_events,
+                    maximum_digests=args.max_digests,
+                    maximum_semantic_documents=max(args.semantic_top_k, 1),
+                    semantic_score_threshold=args.semantic_score_threshold,
+                    digest_score_threshold=args.digest_score_threshold,
+                    episodic_event_max_chars=args.episodic_event_max_chars,
+                    episodic_digest_max_chars=args.episodic_digest_max_chars,
+                    semantic_item_max_chars=args.semantic_item_max_chars,
+                ),
             )
     except (ImportError, OSError, RuntimeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
