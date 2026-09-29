@@ -43,6 +43,27 @@ def test_safety_margin_must_leave_usable_space():
         )
 
 
+def test_zero_semantic_document_limit_is_allowed():
+    limits = _limits()
+    limits = PromptLimits(
+        maximum_total_tokens=limits.maximum_total_tokens,
+        maximum_procedural_tokens=limits.maximum_procedural_tokens,
+        maximum_episodic_event_tokens=limits.maximum_episodic_event_tokens,
+        maximum_episodic_digest_tokens=limits.maximum_episodic_digest_tokens,
+        maximum_semantic_tokens=limits.maximum_semantic_tokens,
+        maximum_semantic_documents=0,
+    )
+    validate_budgets(PromptBudgets(100, 10, 10, 10, 0), limits)
+
+
+def test_negative_semantic_document_limit_is_rejected():
+    with pytest.raises(PromptConfigurationError, match="maximum_semantic_documents"):
+        validate_budgets(
+            PromptBudgets(100, 10, 10, 10, 0),
+            PromptLimits(100, 20, 20, 20, 20, maximum_semantic_documents=-1),
+        )
+
+
 def test_approximate_counter_and_truncation_are_deterministic():
     counter = ApproximateTokenCounter()
     assert counter.count("12345") == 2
