@@ -61,7 +61,6 @@ def validate_budgets(budgets: PromptBudgets, limits: PromptLimits) -> None:
         "maximum_semantic_tokens": limits.maximum_semantic_tokens,
         "maximum_events": limits.maximum_events,
         "maximum_digests": limits.maximum_digests,
-        "maximum_semantic_documents": limits.maximum_semantic_documents,
         "maximum_item_chars": limits.maximum_item_chars,
     }
     optional_limit_values = {
@@ -76,6 +75,10 @@ def validate_budgets(budgets: PromptBudgets, limits: PromptLimits) -> None:
             if value is not None
         }
     )
+    if limits.maximum_semantic_documents < 0:
+        raise PromptConfigurationError(
+            "maximum_semantic_documents must not be negative"
+        )
     non_positive = [name for name, value in limit_values.items() if value <= 0]
     if non_positive:
         raise PromptConfigurationError(

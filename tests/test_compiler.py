@@ -158,6 +158,26 @@ def test_compiles_all_memory_types_into_structured_prompt():
     assert compiled.metrics.total_used_tokens <= 140
 
 
+
+@pytest.mark.parametrize(
+    "budget,document_limit",
+    [(0, 5), (30, 0), (0, 0)],
+)
+def test_disabled_semantic_policy_does_not_recall(budget, document_limit):
+    semantic = FakeSemanticMemory()
+    compiled = PromptCompiler(
+        semantic_memory=semantic,
+        token_counter=WordCounter(),
+    ).compile(
+        PromptRequest(account_name="acct", current_input="question"),
+        _budgets(semantic_tokens=budget),
+        _limits(maximum_semantic_documents=document_limit),
+    )
+
+    assert semantic.request is None
+    assert compiled.metrics.semantic.retrieved_items == 0
+    assert not any(message.source == "semantic" for message in compiled.messages)
+
 def test_mandatory_content_that_cannot_fit_fails_clearly():
     compiler = PromptCompiler(token_counter=WordCounter())
     with pytest.raises(PromptBudgetExceededError, match="mandatory"):

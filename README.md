@@ -1,5 +1,9 @@
 # galet-prompt-builder
 
+**Prompt compilation layer.** The caller supplies instructions, current input, retrieval options, and budgets. Galet-prompt-builder obtains memory through galet-memory, chooses relevant candidates within the limits, and assembles provider messages with selection metrics. It consumes digests; it does not generate or store them. An agent application such as Lucy chooses when to compile a prompt and which policy to use.
+
+See the [Galet package responsibilities](https://github.com/junwin/galet/blob/main/docs/architecture.md) for the full layering.
+
 Provider-neutral orchestration of CoALA memory into bounded prompts.
 
 The package compiles caller-supplied system instructions and current input
