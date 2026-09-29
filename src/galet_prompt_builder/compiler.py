@@ -91,7 +91,7 @@ class PromptCompiler:
                 f"{usable_limit}"
             )
 
-        retrieved = self._retrieve_candidates(request, limits)
+        retrieved = self._retrieve_candidates(request, budgets, limits)
         candidates, rejected = self._apply_relevance_thresholds(
             request, retrieved
         )
@@ -162,14 +162,19 @@ class PromptCompiler:
         return messages
 
     def _retrieve_candidates(
-        self, request: PromptRequest, limits: PromptLimits
+        self, request: PromptRequest, budgets: PromptBudgets, limits: PromptLimits
     ) -> list[PromptCandidate]:
         candidates: list[PromptCandidate] = []
         if request.include_procedural and self.procedural_memory:
             candidates.extend(self._recall_procedural(request, limits))
         if request.include_episodic and self.episodic_memory:
             candidates.extend(self._recall_episodic(request, limits))
-        if request.include_semantic and self.semantic_memory:
+        if (
+            request.include_semantic
+            and self.semantic_memory
+            and budgets.semantic_tokens > 0
+            and limits.maximum_semantic_documents > 0
+        ):
             candidates.extend(self._recall_semantic(request, limits))
         return self._deduplicate_digests(candidates)
 
