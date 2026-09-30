@@ -192,7 +192,7 @@ class PromptCompiler:
     def _recall_procedural(
         self, request: PromptRequest, limits: PromptLimits
     ) -> list[PromptCandidate]:
-        if not request.context_name:
+        if not request.context_name and not request.skill_names:
             return []
         try:
             result = self.procedural_memory.recall(
@@ -204,12 +204,13 @@ class PromptCompiler:
                     include_resolved_text=True,
                     include_skills=True,
                     include_required_tools=True,
+                    skill_names=tuple(dict.fromkeys(request.skill_names)),
                 )
             )
         except Exception as exc:
             raise MemoryRetrievalError("procedural memory recall failed") from exc
         output: list[PromptCandidate] = []
-        context_text = result.text or result.resolved_text
+        context_text = result.text or (result.resolved_text if not result.skills else "")
         if context_text.strip():
             output.append(
                 self._candidate(

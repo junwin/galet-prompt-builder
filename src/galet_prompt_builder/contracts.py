@@ -34,6 +34,7 @@ class PromptRequest:
     include_episodic: bool = True
     include_semantic: bool = True
     include_digests: bool = True
+    skill_names: Sequence[str] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
