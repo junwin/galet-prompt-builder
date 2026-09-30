@@ -41,6 +41,7 @@ class FakeProceduralMemory:
         return ProceduralMemoryResult(
             context_id="project",
             account_name=request.account_name,
+            text="Use the project conventions.",
             resolved_text="Use the project conventions.",
             skills=[ProceduralSkill("testing", "Run focused tests.")],
         )
@@ -502,3 +503,17 @@ def test_relevance_thresholds_must_be_probabilities(field, value):
             _budgets(),
             _limits(),
         )
+
+
+def test_named_skills_compile_without_context_and_without_duplicate_text(tmp_path):
+    from galet_memory import FileProceduralMemory, ProceduralLayout
+    from galet_prompt_builder import PromptPolicy
+    memory = FileProceduralMemory(tmp_path, ProceduralLayout.lucy())
+    memory.repository.save_skill(account_name="alice", skill_name="writing", text="Write clearly")
+    compiler = PromptCompiler(procedural_memory=memory)
+    compiled = compiler.build(PromptRequest(account_name="alice", current_input="Hello",
+                              skill_names=("writing", "writing"), include_episodic=False,
+                              include_semantic=False), PromptPolicy())
+    text = str(compiled.provider_messages)
+    assert text.count("Write clearly") == 1
+    assert "Project context:" not in text
