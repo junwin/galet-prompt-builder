@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "galet-prompt-builder"
-version = "0.1.20"
+version = "0.1.21"
 description = "Provider-neutral, memory-aware prompt compilation"
 readme = "README.md"
 requires-python = ">=3.11"
