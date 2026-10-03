@@ -13,7 +13,7 @@ authors = [{ name = "junwin", email = "jdunwin@gmail.com" }]
 keywords = ["prompt", "llm", "memory", "prompt-builder"]
 dependencies = [
     "galet>=0.1.21",
-    "galet-memory>=0.1.20",
+    "galet-memory>=0.1.24",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
