@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
-from typing import Any, Optional, Sequence
+from typing import Any, Optional, Sequence, Protocol
 
 from galet_memory import (
-    EpisodicMemory,
-    EpisodicMemoryRequest,
+    EventStore,
+    CurationStore,
+    DigestStore,
     ProceduralMemory,
     ProceduralMemoryRequest,
     SemanticMemory,
@@ -52,6 +53,10 @@ _SELECTION_ORDER: tuple[PromptSource, ...] = (
 )
 
 
+class PromptEpisodicStore(EventStore, CurationStore, Protocol):
+    """Recent event access plus active archive-boundary snapshots."""
+
+
 class PromptCompiler:
     """Compile a bounded prompt using provider-neutral CoALA memory."""
 
@@ -59,13 +64,15 @@ class PromptCompiler:
         self,
         *,
         procedural_memory: Optional[ProceduralMemory] = None,
-        episodic_memory: Optional[EpisodicMemory] = None,
+        episodic_memory: Optional[PromptEpisodicStore] = None,
+        digest_memory: Optional[DigestStore] = None,
         semantic_memory: Optional[SemanticMemory] = None,
         token_counter: Optional[TokenCounter] = None,
         relevance_assessor: Optional[RelevanceAssessor] = None,
     ) -> None:
         self.procedural_memory = procedural_memory
         self.episodic_memory = episodic_memory
+        self.digest_memory = digest_memory
         self.semantic_memory = semantic_memory
         self.token_counter = token_counter or ApproximateTokenCounter()
         self.relevance_assessor = (
@@ -178,7 +185,7 @@ class PromptCompiler:
         candidates: list[PromptCandidate] = []
         if request.include_procedural and self.procedural_memory:
             candidates.extend(self._recall_procedural(request, limits))
-        if request.include_episodic and self.episodic_memory:
+        if request.include_episodic and (self.episodic_memory or self.digest_memory):
             candidates.extend(self._recall_episodic(request, limits))
         if (
             request.include_semantic
@@ -241,37 +248,43 @@ class PromptCompiler:
     def _recall_episodic(
         self, request: PromptRequest, limits: PromptLimits
     ) -> list[PromptCandidate]:
+        events = []
+        digests = []
         try:
-            result = self.episodic_memory.recall(
-                EpisodicMemoryRequest(
+            if self.episodic_memory and request.conversation_id and limits.maximum_events > 0:
+                page = self.episodic_memory.get_recent_events(
                     account_name=request.account_name,
-                    agent_name="",
-                    conversation_id=request.conversation_id,
-                    query=request.semantic_query or request.current_input,
-                    max_events=limits.maximum_events,
-                    digest_top_k=limits.maximum_digests,
-                    digest_max_chars=self._item_char_limit(
-                        "episodic_digest", limits
-                    ),
-                    event_kinds=(
-                        list(request.episodic_event_kinds)
-                        if request.episodic_event_kinds is not None
-                        else None
-                    ),
-                    include_session_metadata=bool(request.conversation_id),
-                    include_recent_history=bool(request.conversation_id),
-                    include_archived_digests=request.include_digests,
+                    session_id=request.conversation_id,
+                    count=limits.maximum_events,
+                    event_kinds=request.episodic_event_kinds,
                 )
-            )
+                events = list(page.events)
+                # Recent reads intentionally exclude control records. Preserve the
+                # active archive summary, but never an older pre-reset boundary.
+                if request.episodic_event_kinds is None or "session_digest" in request.episodic_event_kinds:
+                    snapshot = self.episodic_memory.get_active_snapshot(
+                        account_name=request.account_name, session_id=request.conversation_id,
+                    )
+                    boundary = next((event for event in snapshot.events
+                                     if event.kind == "session_digest"
+                                     and event.metadata.get("visibility_boundary") is True), None)
+                    if boundary is not None:
+                        events = [boundary, *[event for event in events if event.event_id != boundary.event_id]]
+            if request.include_digests and self.digest_memory and limits.maximum_digests > 0:
+                digests = self.digest_memory.search_digests(
+                    account_name=request.account_name,
+                    query=request.semantic_query or request.current_input,
+                    count=limits.maximum_digests,
+                )
         except Exception as exc:
-            raise MemoryRetrievalError("episodic memory recall failed") from exc
+            raise MemoryRetrievalError("episodic memory retrieval failed") from exc
         output: list[PromptCandidate] = []
         allowed_event_kinds = (
             set(request.episodic_event_kinds)
             if request.episodic_event_kinds is not None
             else None
         )
-        for order, event in enumerate(result.events, start=1):
+        for order, event in enumerate(events, start=1):
             if (
                 allowed_event_kinds is not None
                 and event.kind not in allowed_event_kinds
@@ -301,7 +314,7 @@ class PromptCompiler:
                 )
             )
         if request.include_digests:
-            for order, digest in enumerate(result.digests, start=1):
+            for order, digest in enumerate(digests, start=1):
                 content = (
                     f"Relevant session digest ({digest.session_id}):\n"
                     f"{digest.snippet}"

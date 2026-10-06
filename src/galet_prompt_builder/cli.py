@@ -9,8 +9,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from galet_memory import (
-    EpisodicSession,
-    EpisodicSessionQuery,
+    Session,
     FileProceduralMemory,
     ProceduralLayout,
     SqliteEpisodicMemory,
@@ -226,16 +225,17 @@ def _resolve_session(
     *,
     account_name: str,
     friendly_name: str,
-) -> EpisodicSession:
+) -> Session:
     expected = friendly_name.strip().casefold()
-    sessions = memory.list_sessions(
-        EpisodicSessionQuery(account_name=account_name, limit=10000)
-    )
-    matches = [
-        session
-        for session in sessions
-        if (session.friendly_name or "").strip().casefold() == expected
-    ]
+    matches = []
+    cursor = None
+    while True:
+        page = memory.list_sessions(account_name=account_name, count=100, cursor=cursor)
+        matches.extend(session for session in page.items
+                       if (session.friendly_name or "").strip().casefold() == expected)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
     if not matches:
         raise ValueError(
             f"no chat named {friendly_name!r} for account {account_name!r}"
@@ -252,7 +252,7 @@ def _resolve_session(
 def _render_text(
     *,
     chat_name: str,
-    session: EpisodicSession,
+    session: Session,
     database: Path,
     compiled,
 ) -> str:
@@ -291,7 +291,7 @@ def _render_text(
 def _render_json(
     *,
     chat_name: str,
-    session: EpisodicSession,
+    session: Session,
     database: Path,
     compiled,
 ) -> str:
@@ -334,7 +334,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 SqliteEpisodicMemory(
                     database,
                     initialize_schema=False,
-                    digest_recall=digest_recall,
+                    digest_search=digest_recall,
                 )
             )
             session = _resolve_session(
@@ -348,6 +348,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ValueError(f"project context {context_name!r} not found under {procedural_memory.repository.root}")
             compiled = PromptCompiler(
                 episodic_memory=episodic_memory,
+                digest_memory=episodic_memory if digest_recall is not None else None,
                 semantic_memory=semantic_memory if args.namespaces else None,
                 procedural_memory=procedural_memory,
             ).build(

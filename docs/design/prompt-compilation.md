@@ -39,11 +39,21 @@ retrieval counts, item size, and message-overhead accounting.
 
 ## Retrieval
 
-The compiler calls only the `ProceduralMemory`, `EpisodicMemory`, and
-`SemanticMemory` interfaces. It requests procedural memory without creating a
-missing context. Episodic recall receives an empty `agent_name`; the compiler
-does not perform agent resolution. Semantic retrieval uses the current input
-unless the caller supplies a distinct semantic query.
+The compiler calls `ProceduralMemory`, explicit episodic `EventStore` and
+`CurationStore` operations, an optional separate `DigestStore`, and
+`SemanticMemory`. Procedural reads never create missing contexts. Recent
+history uses account/session-scoped `get_recent_events` with kind filters before
+counts. Only the current boundary digest is extracted from
+`get_active_snapshot`; it remains required within the event budget and never
+resurrects a pre-reset boundary. Historical search uses a separately injected
+`digest_memory.search_digests`. No agent resolution, combined recall request,
+storage-level token budget or truncation is used. Semantic/digest queries use
+the current input unless the caller supplies a distinct semantic query.
+
+Zero event/digest counts disable their reads. With no conversation ID, the
+compiler can still search historical digests but does not read recent history.
+The active boundary is an additional candidate, independent of the maximum
+recent event count. Multiple actors in one session retain user/assistant roles.
 
 Memory failures are explicit `MemoryRetrievalError` failures. A future policy
 may support best-effort omission, but that must be requested rather than
