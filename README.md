@@ -28,6 +28,7 @@ from galet_prompt_builder import (
 compiler = PromptCompiler(
     procedural_memory=procedural_memory,
     episodic_memory=episodic_memory,
+    digest_memory=episodic_memory,  # only when its digest_search provider is configured
     semantic_memory=semantic_memory,
 )
 
@@ -92,6 +93,7 @@ from galet_prompt_builder import PromptCompiler, PromptPolicy, PromptRequest
 
 compiled = PromptCompiler(
     episodic_memory=episodic_memory,
+    digest_memory=episodic_memory,  # only when its digest_search provider is configured
     semantic_memory=semantic_memory,
     procedural_memory=procedural_memory,
 ).build(
@@ -108,6 +110,39 @@ compiled = PromptCompiler(
                  semantic_item_max_chars=1800),
 )
 ```
+
+
+## Explicit episodic interfaces
+
+This branch consumes galet-memory PR #33's account-scoped API. The compiler's
+`episodic_memory` implements `EventStore` and the active snapshot operation from
+`CurationStore`; `digest_memory` is an optional, separately supplied `DigestStore`.
+The same SQLite/JSONL object can supply both when it has a configured
+`digest_search` provider. Omit `digest_memory` for recent-history-only use.
+No agent selector or combined `EpisodicMemoryRequest`/`recall` is used.
+
+Recent messages come from `get_recent_events`, with kind filters applied before
+`maximum_events`. Complete JSON content reaches the compiler, which owns text
+rendering, truncation, relevance and token budgets. The active snapshot supplies
+only the current archive boundary summary as an additional required candidate;
+it does not select older pre-reset boundaries. That summary uses the event
+budget, independently of historical digest search. Search uses
+`search_digests(account_name=..., query=..., count=...)` and the separate digest
+budget. Both paths respect memory's invalidation/provenance rules.
+
+Zero `maximum_events` or `maximum_digests` disables the corresponding read;
+negative counts are rejected. No conversation ID means no recent-history read,
+but explicit digest search can still run across account-owned sessions.
+Compilation remains read-only. A context reset retains storage history while
+removing prior events and boundary summaries from recent prompt context.
+
+The dependency and lockfile temporarily pin the immutable galet-memory PR #33
+merge commit `1215486ccdb300c438e51b76ef0ec14355559708`; replace it with the
+coordinated released-version requirement before publishing to PyPI. This is a
+breaking API/storage change requiring a fresh schema-v2 database. Lucy's prompt
+compiler setup must supply `digest_memory` explicitly if historical digest
+search is wanted; its other episodic consumers still need updating before
+coordinated release/deployment.
 
 
 ## Prompt comparison CLI

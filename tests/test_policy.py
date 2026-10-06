@@ -1,11 +1,11 @@
-from galet_memory import EpisodicDigest, EpisodicMemoryResult
+from galet_memory import DigestMatch
 
 from galet_prompt_builder import PromptCompiler, PromptPolicy, PromptRequest
 
 
 class Episodic:
-    def recall(self, request):
-        return EpisodicMemoryResult(digests=[EpisodicDigest("old", "Relevant digest", 0.5)])
+    def search_digests(self, **kwargs):
+        return [DigestMatch("old", "Relevant digest", 0.5)]
 
 
 def test_policy_build_owns_budgets_limits_and_thresholds():
@@ -15,7 +15,7 @@ def test_policy_build_owns_budgets_limits_and_thresholds():
         episodic_digest_tokens=80, semantic_tokens=0,
         digest_score_threshold=0.6,
     )
-    compiled = PromptCompiler(episodic_memory=Episodic()).build(
+    compiled = PromptCompiler(digest_memory=Episodic()).build(
         PromptRequest(account_name="alice", current_input="Find an earlier digest",
                       include_semantic=False), policy,
     )

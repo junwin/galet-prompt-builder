@@ -3,9 +3,9 @@ from types import SimpleNamespace
 import pytest
 
 from galet_memory import (
-    EpisodicDigest,
-    EpisodicEvent,
-    EpisodicMemoryResult,
+    DigestMatch,
+    Event,
+    EventPage,
     ProceduralMemoryResult,
     ProceduralSkill,
     SemanticDocument,
@@ -47,26 +47,41 @@ class FakeProceduralMemory:
         )
 
 
+def event_fixture(role, content, **kwargs):
+    return Event(role=role, content=content, actor="fixture", **kwargs)
+
+
+def memory_fixture(*, session_id="session", events=(), digests=()):
+    return SimpleNamespace(session_id=session_id, events=events, digests=digests)
+
+
 class FakeEpisodicMemory:
     def __init__(self, result=None, error=None):
-        self.result = result or EpisodicMemoryResult(
-            session_id="session",
-            events=[
-                EpisodicEvent("user", "Earlier question", event_id="e1"),
-                EpisodicEvent(
-                    "assistant", "Earlier answer", event_id="e2"
-                ),
-            ],
-            digests=[EpisodicDigest("old-session", "Older decision", 0.8)],
+        self.result = result or memory_fixture(
+            events=[event_fixture("user", "Earlier question", event_id="e1"),
+                    event_fixture("assistant", "Earlier answer", event_id="e2")],
+            digests=[DigestMatch("old-session", "Older decision", 0.8)],
         )
         self.error = error
         self.request = None
+        self.search_request = None
 
-    def recall(self, request):
-        self.request = request
+    def get_recent_events(self, **kwargs):
+        self.request = SimpleNamespace(**kwargs)
         if self.error:
             raise self.error
+        events = [e for e in self.result.events if e.kind != "session_digest"
+                  and (kwargs['event_kinds'] is None or e.kind in kwargs['event_kinds'])]
+        return EventPage(tuple(events[-kwargs['count']:]))
+
+    def get_active_snapshot(self, **kwargs):
         return self.result
+
+    def search_digests(self, **kwargs):
+        self.search_request = SimpleNamespace(**kwargs)
+        if self.error:
+            raise self.error
+        return self.result.digests[:kwargs['count']]
 
     def save_overflow_digest(self, **kwargs):
         raise AssertionError("prompt compilation must be read-only")
@@ -122,6 +137,7 @@ def test_compiles_all_memory_types_into_structured_prompt():
     compiler = PromptCompiler(
         procedural_memory=procedural,
         episodic_memory=episodic,
+        digest_memory=episodic,
         semantic_memory=semantic,
         token_counter=WordCounter(),
     )
@@ -129,9 +145,9 @@ def test_compiles_all_memory_types_into_structured_prompt():
     compiled = compiler.compile(
         PromptRequest(
             account_name="acct",
+            conversation_id="session",
             current_input="What did we decide?",
             system_instructions=("Be careful.",),
-            conversation_id="session",
             context_name="project",
         ),
         _budgets(),
@@ -154,7 +170,8 @@ def test_compiles_all_memory_types_into_structured_prompt():
     assert "source" not in compiled.provider_messages[0]
     assert "[user]" in compiled.text
     assert procedural.request.create_if_missing is False
-    assert episodic.request.agent_name == ""
+    assert episodic.request.account_name == "acct"
+    assert not hasattr(episodic.request, "agent_name")
     assert semantic.request.query == "What did we decide?"
     assert compiled.metrics.total_used_tokens <= 140
 
@@ -170,7 +187,7 @@ def test_disabled_semantic_policy_does_not_recall(budget, document_limit):
         semantic_memory=semantic,
         token_counter=WordCounter(),
     ).compile(
-        PromptRequest(account_name="acct", current_input="question"),
+        PromptRequest(account_name="acct", conversation_id="session", current_input="question"),
         _budgets(semantic_tokens=budget),
         _limits(maximum_semantic_documents=document_limit),
     )
@@ -201,7 +218,7 @@ def test_section_budget_truncates_without_exceeding_limit():
         semantic_memory=semantic,
         token_counter=CharacterCounter(),
     ).compile(
-        PromptRequest(account_name="acct", current_input="q"),
+        PromptRequest(account_name="acct", conversation_id="session", current_input="q"),
         _budgets(
             total_tokens=100,
             procedural_tokens=0,
@@ -228,7 +245,7 @@ def test_character_limit_includes_the_truncation_marker():
         semantic_memory=semantic,
         token_counter=CharacterCounter(),
     ).compile(
-        PromptRequest(account_name="acct", current_input="q"),
+        PromptRequest(account_name="acct", conversation_id="session", current_input="q"),
         _budgets(
             total_tokens=100,
             procedural_tokens=0,
@@ -257,7 +274,7 @@ def test_higher_scored_semantic_document_is_selected_first():
         semantic_memory=semantic,
         token_counter=WordCounter(),
     ).compile(
-        PromptRequest(account_name="acct", current_input="unrelated query"),
+        PromptRequest(account_name="acct", conversation_id="session", current_input="unrelated query"),
         _budgets(
             procedural_tokens=0,
             episodic_event_tokens=0,
@@ -275,10 +292,10 @@ def test_higher_scored_semantic_document_is_selected_first():
 
 
 def test_duplicate_active_and_recalled_digest_is_inserted_once():
-    result = EpisodicMemoryResult(
+    result = memory_fixture(
         session_id="session",
         events=[
-            EpisodicEvent(
+            event_fixture(
                 "system",
                 "same digest",
                 kind="session_digest",
@@ -286,13 +303,14 @@ def test_duplicate_active_and_recalled_digest_is_inserted_once():
                 metadata={"visibility_boundary": True},
             )
         ],
-        digests=[EpisodicDigest("session", "same digest", 1.0)],
+        digests=[DigestMatch("session", "same digest", 1.0)],
     )
     compiled = PromptCompiler(
-        episodic_memory=FakeEpisodicMemory(result),
+        episodic_memory=(memory := FakeEpisodicMemory(result)),
+        digest_memory=memory,
         token_counter=WordCounter(),
     ).compile(
-        PromptRequest(account_name="acct", current_input="question"),
+        PromptRequest(account_name="acct", conversation_id="session", current_input="question"),
         _budgets(),
         _limits(),
     )
@@ -308,7 +326,7 @@ def test_memory_failure_is_not_silently_hidden():
     )
     with pytest.raises(MemoryRetrievalError, match="episodic"):
         compiler.compile(
-            PromptRequest(account_name="acct", current_input="question"),
+            PromptRequest(account_name="acct", conversation_id="session", current_input="question"),
             _budgets(),
             _limits(),
         )
@@ -316,9 +334,9 @@ def test_memory_failure_is_not_silently_hidden():
 
 def test_metrics_do_not_copy_memory_content():
     compiled = PromptCompiler(
-        episodic_memory=FakeEpisodicMemory(), token_counter=WordCounter()
+        episodic_memory=(memory := FakeEpisodicMemory()), digest_memory=memory, token_counter=WordCounter()
     ).compile(
-        PromptRequest(account_name="acct", current_input="question"),
+        PromptRequest(account_name="acct", conversation_id="session", current_input="question"),
         _budgets(),
         _limits(),
     )
@@ -326,19 +344,19 @@ def test_metrics_do_not_copy_memory_content():
 
 
 def test_episodic_policy_filters_event_kinds_and_structured_payloads():
-    result = EpisodicMemoryResult(
+    result = memory_fixture(
         session_id="session",
         events=[
-            EpisodicEvent(
+            event_fixture(
                 "user", "Keep this", kind="user_message", event_id="e1"
             ),
-            EpisodicEvent(
+            event_fixture(
                 "system",
                 {"total": 6000},
                 kind="prompt_report",
                 event_id="e2",
             ),
-            EpisodicEvent(
+            event_fixture(
                 "assistant",
                 {"tool_name": "delegate_task"},
                 kind="assistant_message",
@@ -350,10 +368,12 @@ def test_episodic_policy_filters_event_kinds_and_structured_payloads():
 
     compiled = PromptCompiler(
         episodic_memory=episodic,
+        digest_memory=episodic,
         token_counter=WordCounter(),
     ).compile(
         PromptRequest(
             account_name="acct",
+            conversation_id="session",
             current_input="question",
             episodic_event_kinds=("user_message", "assistant_message"),
             include_structured_episodic_events=False,
@@ -366,28 +386,30 @@ def test_episodic_policy_filters_event_kinds_and_structured_payloads():
         item for item in compiled.messages if item.source == "episodic_event"
     ]
     assert [item.content for item in episodic_messages] == ["Keep this"]
-    assert episodic.request.max_events == 6
-    assert episodic.request.event_kinds == [
+    assert episodic.request.count == 6
+    assert tuple(episodic.request.event_kinds) == (
         "user_message",
         "assistant_message",
-    ]
+    )
 
 
 def test_digest_threshold_drops_weak_archived_digest():
-    result = EpisodicMemoryResult(
+    result = memory_fixture(
         session_id="session",
         digests=[
-            EpisodicDigest("weak", "Weak digest", 0.29),
-            EpisodicDigest("strong", "Strong digest", 0.75),
+            DigestMatch("weak", "Weak digest", 0.29),
+            DigestMatch("strong", "Strong digest", 0.75),
         ],
     )
 
     compiled = PromptCompiler(
-        episodic_memory=FakeEpisodicMemory(result),
+        episodic_memory=(memory := FakeEpisodicMemory(result)),
+        digest_memory=memory,
         token_counter=WordCounter(),
     ).compile(
         PromptRequest(
             account_name="acct",
+            conversation_id="session",
             current_input="question",
             episodic_digest_score_threshold=0.4,
         ),
@@ -430,6 +452,7 @@ def test_semantic_policy_is_forwarded_and_item_size_is_bounded():
     ).compile(
         PromptRequest(
             account_name="acct",
+            conversation_id="session",
             current_input="question",
             semantic_score_threshold=0.35,
         ),
@@ -461,6 +484,7 @@ def test_semantic_candidate_trace_explains_threshold_rejection():
     ).compile(
         PromptRequest(
             account_name="acct",
+            conversation_id="session",
             current_input="question",
             semantic_score_threshold=0.35,
         ),

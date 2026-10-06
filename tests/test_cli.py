@@ -1,7 +1,7 @@
 import json
 
 from galet_memory import (
-    EpisodicEvent,
+    NewEvent,
     SemanticDocument,
     SemanticMemoryResult,
     SqliteEpisodicMemory,
@@ -18,16 +18,15 @@ def _database(tmp_path):
     with SqliteEpisodicMemory(database) as memory:
         session = memory.create_session(
             account_name="junwin",
-            agent_name="nelly",
             session_id="session-123",
             friendly_name="Prompt Comparison",
             context_name="lucyproject",
         )
-        memory.add_events(
-            session.session_id,
-            [
-                EpisodicEvent("user", "Earlier question"),
-                EpisodicEvent("assistant", "Earlier answer"),
+        memory.append_events(
+            account_name="junwin", session_id=session.session_id,
+            events=[
+                NewEvent("user", "Earlier question", "junwin"),
+                NewEvent("assistant", "Earlier answer", "nelly"),
             ],
         )
     return database
@@ -235,10 +234,13 @@ def test_cli_passes_archived_digest_recall_to_episodic_memory(
     _database(tmp_path)
     (tmp_path / "data" / "embeddings-v2.sqlite").touch()
 
-    def recalled(request):
-        from galet_memory import EpisodicDigest
+    with SqliteEpisodicMemory(tmp_path / "data" / "chat2.sqlite") as memory:
+        source_ids = [e.event_id for e in memory.get_recent_events(account_name="junwin", session_id="session-123").events]
 
-        return [EpisodicDigest("older-session", "Attention is a practice.", 0.8)]
+    def recalled(request):
+        from galet_memory import DigestMatch
+
+        return [DigestMatch("session-123", "Attention is a practice.", 0.8, metadata={"source_event_ids": source_ids})]
 
     monkeypatch.setattr(
         cli_module, "_semantic_memory",
@@ -284,18 +286,18 @@ def test_cli_default_policy_limits_and_filters_episodic_events(
 ):
     database = _database(tmp_path)
     with SqliteEpisodicMemory(database) as memory:
-        memory.add_events(
-            "session-123",
-            [
-                EpisodicEvent(
+        memory.append_events(
+            account_name="junwin", session_id="session-123",
+            events=[
+                NewEvent(
                     "system",
-                    {"total": 6000},
+                    {"total": 6000}, "processor",
                     kind="prompt_report",
                 ),
                 *[
-                    EpisodicEvent(
+                    NewEvent(
                         "user",
-                        f"Recent message {index}",
+                        f"Recent message {index}", "junwin",
                         kind="user_message",
                     )
                     for index in range(10)
