@@ -6,6 +6,27 @@ See the [Galet package responsibilities](https://github.com/junwin/galet/blob/ma
 
 Provider-neutral orchestration of CoALA memory into bounded prompts.
 
+## Install
+
+Install from PyPI:
+
+```bash
+pip install galet-prompt-builder
+```
+
+The compiler reads memory through `galet-memory` stores, which are
+installed automatically as a dependency.
+
+### Quick sample
+
+See [Basic use](#basic-use) below for a complete compile example with
+budgets and limits. For an end-to-end comparison against an existing chat
+database, use the installed `galet-prompt-run` CLI:
+
+```bash
+galet-prompt-run "What should we do next?" --chat-name "Prompt Builder Work"
+```
+
 The package compiles caller-supplied system instructions and current input
 with procedural, episodic, and semantic memory from `galet-memory`. It applies
 independent section budgets, a total hard limit, relevance assessment, digest
