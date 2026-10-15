@@ -1,10 +1,15 @@
 # galet-prompt-builder
 
-**Prompt compilation layer.** The caller supplies instructions, current input, retrieval options, and budgets. Galet-prompt-builder obtains memory through galet-memory, chooses relevant candidates within the limits, and assembles provider messages with selection metrics. It consumes digests; it does not generate or store them. An agent application such as Lucy chooses when to compile a prompt and which policy to use.
-
-See the [Galet package responsibilities](https://github.com/junwin/galet/blob/main/docs/architecture.md) for the full layering.
-
 Provider-neutral orchestration of CoALA memory into bounded prompts.
+
+The caller supplies instructions, current input, retrieval options, and
+budgets. Galet-prompt-builder obtains memory through galet-memory, chooses
+relevant candidates within the limits, and assembles provider messages with
+selection metrics. It consumes digests; it does not generate or store them.
+The host application chooses when to compile a prompt and which policy to use.
+
+See the [galet architecture notes](https://github.com/junwin/galet/blob/main/docs/architecture.md)
+for the full layering.
 
 ## Install
 
@@ -32,9 +37,9 @@ with procedural, episodic, and semantic memory from `galet-memory`. It applies
 independent section budgets, a total hard limit, relevance assessment, digest
 deduplication, deterministic selection, and detailed metrics.
 
-It deliberately has no concept of Lucy agents, handlers, storage paths,
-attachments, or application configuration. Lucy can later adapt those values
-into `PromptRequest`, `PromptBudgets`, and `PromptLimits`.
+It deliberately has no concept of host agents, handlers, storage paths,
+attachments, or application configuration. The host adapts those values into
+`PromptRequest`, `PromptBudgets`, and `PromptLimits`.
 
 ## Basic use
 
@@ -135,7 +140,7 @@ compiled = PromptCompiler(
 
 ## Explicit episodic interfaces
 
-This branch consumes galet-memory PR #33's account-scoped API. The compiler's
+The compiler's
 `episodic_memory` implements `EventStore` and the active snapshot operation from
 `CurationStore`; `digest_memory` is an optional, separately supplied `DigestStore`.
 The same SQLite/JSONL object can supply both when it has a configured
@@ -157,25 +162,20 @@ but explicit digest search can still run across account-owned sessions.
 Compilation remains read-only. A context reset retains storage history while
 removing prior events and boundary summaries from recent prompt context.
 
-The dependency and lockfile temporarily pin the immutable galet-memory PR #33
-merge commit `1215486ccdb300c438e51b76ef0ec14355559708`; replace it with the
-coordinated released-version requirement before publishing to PyPI. This is a
-breaking API/storage change requiring a fresh schema-v2 database. Lucy's prompt
-compiler setup must supply `digest_memory` explicitly if historical digest
-search is wanted; its other episodic consumers still need updating before
-coordinated release/deployment.
+This is a breaking API/storage change requiring a fresh database. Supply
+`digest_memory` explicitly if historical digest search is wanted.
 
 
 ## Prompt comparison CLI
 
 The installed `galet-prompt-run` command compiles a prompt from an existing
-Lucy chat and a new request. It resolves the chat's friendly name to its stored
-session ID and reads episodic history from Lucy's SQLite database.
+chat database and a new request. It resolves the chat's friendly name to its stored
+session ID and reads episodic history from the SQLite chat database.
 
 By default it reads:
 
 ```text
-/home/junwin/lucy_storage/data/chat2.sqlite
+/home/<user>/lucy_storage/data/chat2.sqlite
 ```
 
 Example:
@@ -224,7 +224,7 @@ An explicitly named context that is missing produces
 an error; recall never creates a file. Set `--procedural-tokens 0` to omit
 procedural content for a comparison run.
 
-Semantic recall is opt-in. Supply one or more namespaces to query Lucy's
+Semantic recall is opt-in. Supply one or more namespaces to query the
 `embeddings-v2.sqlite` store:
 
 ```bash
@@ -272,7 +272,7 @@ current chat appears as an episodic event; it does not by itself create an
 archived digest candidate. Archives must be published with an embedding and
 readable digest document to be recalled from other sessions. Semantic mode
 defaults to
-`/home/junwin/lucy_storage/data/embeddings-v2.sqlite`; use
+`/home/<user>/lucy_storage/data/embeddings-v2.sqlite`; use
 `--embedding-db` to override it and install the optional dependency with
 `pip install ".[semantic]"`. Galet supplies the query embedding, using its
 normal credential configuration or the directory passed to
