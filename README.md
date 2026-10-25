@@ -13,24 +13,131 @@ for the full layering.
 
 ## Install
 
-Install from PyPI:
+Requires Python 3.11 or later. The commands below use a Linux/macOS shell.
+
+### Install the published package
 
 ```bash
-pip install galet-prompt-builder
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install galet-prompt-builder
 ```
 
-The compiler reads memory through `galet-memory` stores, which are
-installed automatically as a dependency.
+Both `galet` and `galet-memory` are installed automatically as required
+dependencies. Add `[semantic]` when using the SQLite vector store:
+`python -m pip install "galet-prompt-builder[semantic]"`.
 
-### Quick sample
-
-See [Basic use](#basic-use) below for a complete compile example with
-budgets and limits. For an end-to-end comparison against an existing chat
-database, use the installed `galet-prompt-run` CLI:
+### Install from source and run the tests
 
 ```bash
-galet-prompt-run "What should we do next?" --chat-name "Prompt Builder Work"
+git clone --branch develop https://github.com/junwin/galet-prompt-builder.git
+cd galet-prompt-builder
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[test,semantic]"
+python -m pytest -q
 ```
+
+For an existing checkout, start from `cd galet-prompt-builder` and reuse
+your `.venv` if present. The `test` extra installs pytest; `semantic` installs
+sqlite-vec for vector recall. You can omit `semantic` if you do not use it.
+
+Editable installation (`-e`) means Python imports this checkout, so source
+changes take effect without reinstalling. Dependencies come from your
+configured package index. To develop against sibling source checkouts too,
+install them into this same environment:
+
+```bash
+python -m pip install -e ../galet -e ../galet-memory
+```
+
+Those paths assume all three repositories share a parent directory.
+No `PYTHONPATH` setting is needed after the editable installation.
+
+### Update an existing source installation
+
+Update your checkout with Git, activate its virtual environment, then run:
+
+```bash
+python -m pip install --upgrade --upgrade-strategy eager -e ".[test,semantic]"
+python -m pytest -q
+```
+
+This upgrades dependencies within the constraints in `pyproject.toml`.
+If you are developing against editable sibling checkouts, update those
+repositories separately too.
+
+## Run locally
+
+Keep the virtual environment active for the commands below. In a new shell,
+run `source .venv/bin/activate` from the checkout first.
+
+### Compile a prompt from Python
+
+This complete example needs no database, credentials, or network calls. It
+compiles the supplied instructions and input without attaching memory stores:
+
+```bash
+python - <<'PY'
+from galet_prompt_builder import PromptCompiler, PromptPolicy, PromptRequest
+
+compiled = PromptCompiler().build(
+    PromptRequest(
+        account_name="demo",
+        system_instructions=("You are a careful assistant.",),
+        current_input="Explain what a prompt compiler does.",
+        include_procedural=False,
+        include_episodic=False,
+        include_semantic=False,
+        include_digests=False,
+    ),
+    PromptPolicy(),
+)
+
+print(compiled.text)
+print(compiled.provider_messages)
+print(compiled.metrics)
+PY
+```
+
+This prints the assembled prompt and metrics; it does not send the prompt to
+an LLM. For memory-backed use, construct and pass the stores shown in
+[Basic use](#basic-use).
+
+### Run the comparison CLI from the checkout
+
+The editable installation also installs `galet-prompt-run`. Check its options:
+
+```bash
+python -m galet_prompt_builder.cli --help
+```
+
+To compile against your existing chat database, replace the account and chat
+name below with your stored values:
+
+```bash
+python -m galet_prompt_builder.cli "What should we do next?" \
+  --account your-account \
+  --storage-root "$HOME/lucy_storage" \
+  --chat-name "Your existing chat name"
+```
+
+You can replace `python -m galet_prompt_builder.cli` with `galet-prompt-run`;
+both invoke the same runner. It expects an existing compatible
+`<storage-root>/data/chat2.sqlite` database and an existing session; installation
+does not create sample chat data. Use `--db /path/to/chat2.sqlite` to override
+the chat database and `--storage-namespace` if it is not `data`.
+
+Pass your own account and storage root explicitly: the CLI currently defaults
+to account `junwin` and storage root `/home/junwin/lucy_storage`.
+The CLI prints a compiled prompt and metrics; it does not generate an LLM reply.
+See [Prompt comparison CLI](#prompt-comparison-cli) for memory and policy options.
+
+When an embeddings database exists at the selected path, the runner also
+initializes vector recall for digests, even without `--namespaces`. That path
+needs the `semantic` extra and Galet embedding credentials; use
+`--credential-path /path/to/credentials` to supply the credential directory.
+Adding `--namespaces` also enables semantic document recall.
 
 The package compiles caller-supplied system instructions and current input
 with procedural, episodic, and semantic memory from `galet-memory`. It applies
@@ -42,6 +149,10 @@ attachments, or application configuration. The host adapts those values into
 `PromptRequest`, `PromptBudgets`, and `PromptLimits`.
 
 ## Basic use
+
+The examples below assume you have already constructed `procedural_memory`,
+`episodic_memory`, and `semantic_memory` stores for your application. Use the
+self-contained example in [Run locally](#run-locally) to verify installation first.
 
 ```python
 from galet_prompt_builder import (
@@ -175,7 +286,7 @@ session ID and reads episodic history from the SQLite chat database.
 By default it reads:
 
 ```text
-/home/<user>/lucy_storage/data/chat2.sqlite
+/home/junwin/lucy_storage/data/chat2.sqlite
 ```
 
 Example:
@@ -272,9 +383,9 @@ current chat appears as an episodic event; it does not by itself create an
 archived digest candidate. Archives must be published with an embedding and
 readable digest document to be recalled from other sessions. Semantic mode
 defaults to
-`/home/<user>/lucy_storage/data/embeddings-v2.sqlite`; use
+`/home/junwin/lucy_storage/data/embeddings-v2.sqlite`; use
 `--embedding-db` to override it and install the optional dependency with
-`pip install ".[semantic]"`. Galet supplies the query embedding, using its
+`python -m pip install -e ".[semantic]"`. Galet supplies the query embedding, using its
 normal credential configuration or the directory passed to
 `--credential-path`.
 
