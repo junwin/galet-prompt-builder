@@ -3,6 +3,8 @@
 from .budgets import ApproximateTokenCounter, TokenCounter
 from .candidates import PromptCandidate
 from .compiler import PromptCompiler
+from .configuration import PromptBuilderSettings, load_prompt_config
+from .configured import ConfiguredPromptBuilder, build_prompt_builder
 from .contracts import (
     PromptBudgets,
     PromptLimits,
@@ -30,6 +32,10 @@ __version__ = "0.1.0.dev0"
 
 __all__ = [
     "ApproximateTokenCounter",
+    "ConfiguredPromptBuilder",
+    "PromptBuilderSettings",
+    "build_prompt_builder",
+    "load_prompt_config",
     "CompiledPrompt",
     "DeterministicRelevanceAssessor",
     "GaletRelevanceAssessor",

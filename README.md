@@ -67,6 +67,125 @@ This upgrades dependencies within the constraints in `pyproject.toml`.
 If you are developing against editable sibling checkouts, update those
 repositories separately too.
 
+## Shared configuration (recommended)
+
+Prompt-builder settings contain prompt policy and a reference to the shared
+**galet-memory config**, not another set of store paths or credential values.
+`galet_prompt_builder_sample.json` is a complete example. Its relative
+`memory_config_path` points to the sibling galet-tools config already tested
+through MCP; adjust the reference to your actual file.
+
+```json
+{
+  "config_version": 1,
+  "memory_config_path": "../galet-tools/galet-memory-mcp.json",
+  "policy": {
+    "total_tokens": 6000,
+    "semantic_tokens": 900,
+    "maximum_semantic_documents": 3
+  }
+}
+```
+
+The public loader selects a configuration object, an explicit `path`, or
+`GALET_PROMPT_BUILDER_CONFIG_PATH`, in that order. Sources are selected rather
+than merged. File references resolve relative to the containing prompt config;
+a configuration object with a relative reference requires `base_dir`.
+Without prompt settings, policy defaults apply and galet-memory selects
+`GALET_MEMORY_CONFIG_PATH`. An invalid selected source fails without falling back.
+Galet-memory still owns its own config validation and backend assembly. Galet
+still owns credential lookup (`GALET_CREDENTIAL_PATH` or the selected profile).
+The configured embedding model is used for retrieval, rather than a hardcoded
+query model. Requires galet-memory 0.1.28 or newer.
+
+### Compile against the same existing stores as MCP
+
+```bash
+export GALET_CREDENTIAL_PATH=/home/junwin/credential
+python -m galet_prompt_builder.cli "What do my notes say about Jon Fosse?" \
+  --config galet_prompt_builder_sample.json \
+  --account junwin --session-id YOUR_EXISTING_SESSION_ID \
+  --namespaces books --format json
+```
+
+Or skip the policy file and pass the shared memory config directly:
+
+```bash
+python -m galet_prompt_builder.cli "What happened at Tyntesfield?" \
+  --memory-config /home/junwin/src/repos/galet-tools/galet-memory-mcp.json \
+  --account junwin --session-id YOUR_EXISTING_SESSION_ID --namespaces vol_7
+```
+
+`--chat-name` can replace `--session-id`. Configured mode uses the declared
+semantic metadata version, episodic database and procedural layout; it does not
+infer any of them from filenames. The comparison CLI requires existing stores
+and will not create missing databases, even if a shared test config has
+`create:true`. Legacy storage/layout/provider flags cannot be combined with
+shared configuration. Policy flags such as `--total-tokens` override only the
+specified policy values. Use `--no-semantic` or `--no-digests` to disable those
+retrieval channels. No LLM reply is generated, but semantic/digest retrieval can
+make paid embedding requests.
+
+When configured namespaces are omitted, retrieval uses the named procedural
+context's `search_namespaces`, then all namespaces belonging to the account if
+none are declared. Explicit namespaces remain authoritative.
+
+### Python API and runtime ownership
+
+```python
+from galet_prompt_builder import build_prompt_builder, PromptRequest
+
+with build_prompt_builder(path="galet_prompt_builder_sample.json",
+                          allow_create=False) as builder:
+    compiled = builder.build(PromptRequest(
+        account_name="junwin",
+        conversation_id="YOUR_EXISTING_SESSION_ID",
+        context_name="reading",
+        current_input="What do my notes say about Jon Fosse?",
+        semantic_namespaces=("books",),
+    ))
+    print(compiled.provider_messages)
+    print(compiled.metrics)
+```
+
+The factory owns and closes memory it constructs. An application that already
+owns a runtime can borrow it instead, avoiding duplicate stores:
+
+```python
+with build_prompt_builder({"config_version": 1},
+                          memory_runtime=runtime) as builder:
+    compiled = builder.build(request)
+# runtime remains open and owned by the application.
+```
+
+Borrowing cannot be combined with another memory-config reference or provider
+factory. `embedding_provider_factory` remains available when constructing memory
+for tests or explicit host integrations. The factory normally honors the memory
+config's creation flags; `allow_create=False` disables creation for existing-store
+inspection. Neither prompt construction nor compilation ingests documents,
+creates sessions, publishes digests, or changes events.
+
+For the Python API, an empty `semantic_namespaces=()` opts into context/all-account
+selection. `PromptRequest` retains its older default `("external",)` for existing
+callers. `PromptCompiler` still accepts explicitly injected memory interfaces.
+
+Configured digest retrieval resolves V3 root-relative locators and checks account
+ownership and invalidation before reading a file. Legacy metadata paths are used
+only in explicit V2 mode and remain confined to configured roots. Missing or
+unauthorized sources do not expose stored text snapshots. A borrowed runtime's
+explicit digest-search provider is preserved. Working state can be part of the
+shared runtime but is not inserted into prompts automatically.
+
+### Application boundary
+
+Prompt-builder owns retrieval, policy, selection and rendering. This configured
+entry point means a host need not construct memory backends or adapt query models
+just to compile a prompt. Session creation, event append, archive/reset and digest
+publication remain application/memory operations. They are not moved into the
+prompt compiler. Applications may retain direct galet-memory use for those tasks
+and lend the same runtime to prompt-builder. No Lucy-specific imports or global
+runtime are introduced here.
+
 ## Run locally
 
 Keep the virtual environment active for the commands below. In a new shell,
@@ -104,7 +223,7 @@ This prints the assembled prompt and metrics; it does not send the prompt to
 an LLM. For memory-backed use, construct and pass the stores shown in
 [Basic use](#basic-use).
 
-### Run the comparison CLI from the checkout
+### Legacy comparison CLI without shared configuration
 
 The editable installation also installs `galet-prompt-run`. Check its options:
 
@@ -144,8 +263,9 @@ with procedural, episodic, and semantic memory from `galet-memory`. It applies
 independent section budgets, a total hard limit, relevance assessment, digest
 deduplication, deterministic selection, and detailed metrics.
 
-It deliberately has no concept of host agents, handlers, storage paths,
-attachments, or application configuration. The host adapts those values into
+The core compiler has no concept of host agents, handlers, attachment storage,
+or application-specific configuration. The configured facade above handles
+only prompt policy and the shared memory reference. The host adapts other values into
 `PromptRequest`, `PromptBudgets`, and `PromptLimits`.
 
 ## Basic use
