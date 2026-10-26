@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import replace
 from typing import Any, Optional, Sequence, Protocol
 
@@ -43,6 +44,8 @@ from .metrics import (
 from .policy import PromptPolicy
 from .relevance import DeterministicRelevanceAssessor, RelevanceAssessor
 from .rendering import render_memory_messages
+
+logger = logging.getLogger(__name__)
 
 
 _SELECTION_ORDER: tuple[PromptSource, ...] = (
@@ -155,6 +158,13 @@ class PromptCompiler:
             current_input=self._fixed_metrics(current_messages, limits),
             warnings=tuple(warnings),
             candidates=tuple(candidate_metrics),
+        )
+        logger.info(
+            "prompt_compile_done account=%s semantic_retrieved=%d semantic_selected=%d "
+            "semantic_dropped=%d total_tokens=%d warnings=%s",
+            request.account_name, metrics.semantic.retrieved_items,
+            metrics.semantic.selected_items, metrics.semantic.dropped_items,
+            total_used, metrics.warnings,
         )
         return CompiledPrompt(messages=messages, metrics=metrics)
 
@@ -350,7 +360,24 @@ class PromptCompiler:
                 )
             )
         except Exception as exc:
+            logger.error("prompt_semantic_recall_failed account=%s error_type=%s",
+                         request.account_name, type(exc).__name__)
             raise MemoryRetrievalError("semantic memory recall failed") from exc
+        metadata = result.metadata or {}
+        if metadata.get("reason") == "embedding_provider_unavailable":
+            logger.error(
+                "prompt_semantic_recall_failed account=%s backend=%s "
+                "reason=embedding_provider_unavailable namespaces=%s",
+                request.account_name, metadata.get("backend"), request.semantic_namespaces,
+            )
+            raise MemoryRetrievalError(
+                "semantic embedding provider unavailable; check Galet credentials "
+                "and provider configuration (including GALET_CREDENTIAL_PATH). "
+                "Keyword fallback cannot confirm that no relevant semantic memory exists."
+            )
+        logger.info("prompt_semantic_recall_done account=%s backend=%s documents=%d unavailable=%d",
+                    request.account_name, metadata.get("backend", "unspecified"),
+                    len(result.documents), len(metadata.get("unavailable_resources", ())))
         output: list[PromptCandidate] = []
         for order, document in enumerate(result.documents, start=1):
             tags = f" | tags: {', '.join(document.tags)}" if document.tags else ""

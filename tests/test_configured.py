@@ -85,6 +85,31 @@ def test_configured_builder_reads_all_prompt_sources_and_selected_model(files):
         builder.build(request())
 
 
+def test_provider_failure_cannot_masquerade_as_empty_semantic_memory(files, monkeypatch, caplog):
+    prompt, _, _ = files
+    with build_prompt_builder(path=prompt, allow_create=False) as builder:
+        def unavailable(*args, **kwargs):
+            raise RuntimeError('Missing credentials')
+        monkeypatch.setattr(builder.memory.ingestion.embeddings, 'embed', unavailable)
+        # galet-memory keeps its keyword fallback, with an explicit failure reason.
+        fallback = builder.memory.recall(account_name='john', query='orchard', namespaces=['books'])
+        assert fallback.metadata['reason'] == 'embedding_provider_unavailable'
+        with pytest.raises(MemoryRetrievalError, match='GALET_CREDENTIAL_PATH'):
+            builder.build(request(include_digests=False))
+        assert 'prompt_semantic_recall_failed' in caplog.text
+
+
+def test_successful_empty_semantic_search_is_not_a_provider_failure(files, caplog):
+    prompt, _, _ = files
+    import logging
+    with caplog.at_level(logging.INFO), build_prompt_builder(path=prompt, allow_create=False) as builder:
+        result = builder.build(request(semantic_namespaces=('empty',), include_digests=False))
+    assert result.metrics.semantic.retrieved_items == 0
+    assert 'prompt_semantic_recall_done' in caplog.text
+    assert 'documents=0' in caplog.text
+    assert 'prompt_compile_done' in caplog.text
+
+
 def test_borrowed_runtime_remains_usable_and_respects_explicit_namespaces(files):
     _, memory, _ = files
     import galet_memory
