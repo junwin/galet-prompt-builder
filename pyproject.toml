@@ -12,8 +12,8 @@ license = "MIT"
 authors = [{ name = "junwin", email = "jdunwin@gmail.com" }]
 keywords = ["prompt", "llm", "memory", "prompt-builder"]
 dependencies = [
-    "galet>=0.1.26",
-    "galet-memory>=0.1.28",
+    "galet>=0.1.27",
+    "galet-memory>=0.1.29",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
