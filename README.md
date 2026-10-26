@@ -98,6 +98,19 @@ still owns credential lookup (`GALET_CREDENTIAL_PATH` or the selected profile).
 The configured embedding model is used for retrieval, rather than a hardcoded
 query model. Requires galet-memory 0.1.28 or newer.
 
+When semantic retrieval is enabled, an embedding-provider failure raises
+`MemoryRetrievalError`, including when galet-memory offers keyword fallback.
+This prevents missing credentials or an unavailable provider from appearing as
+a successful search with no relevant memory. Standalone galet-memory callers
+can still use its explicit keyword fallback. Successful searches with zero
+matches remain valid. Disabling semantic retrieval does not require embeddings
+for that channel; digest retrieval can independently need embeddings.
+
+The `galet_prompt_builder.compiler` logger reports semantic backend and document
+counts, followed by retrieved/selected/dropped counts and policy warnings after
+compilation. Enable INFO logging in the host application. Failure records use
+ERROR level. The package does not install handlers or change global log levels.
+
 ### Compile against the same existing stores as MCP
 
 ```bash
