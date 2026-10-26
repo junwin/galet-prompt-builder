@@ -1,0 +1,20 @@
+{
+  "config_version": 1,
+  "memory_config_path": "../galet-tools/galet-memory-mcp.json",
+  "policy": {
+    "total_tokens": 6000,
+    "safety_margin_tokens": 500,
+    "procedural_tokens": 2000,
+    "episodic_event_tokens": 800,
+    "episodic_digest_tokens": 400,
+    "semantic_tokens": 900,
+    "maximum_events": 6,
+    "maximum_digests": 2,
+    "maximum_semantic_documents": 3,
+    "semantic_score_threshold": 0.35,
+    "digest_score_threshold": 0.45,
+    "episodic_event_max_chars": 4000,
+    "episodic_digest_max_chars": 1800,
+    "semantic_item_max_chars": 1800
+  }
+}

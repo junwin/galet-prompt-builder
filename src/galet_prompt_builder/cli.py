@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from contextlib import ExitStack
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -33,11 +34,14 @@ def _parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument("request", help="The current user request")
-    parser.add_argument(
-        "--chat-name",
-        required=True,
-        help="Exact friendly name of the existing chat session",
-    )
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--chat-name", help="Exact friendly name of an existing session")
+    selection.add_argument("--session-id", help="Existing session ID owned by the account")
+    config = parser.add_mutually_exclusive_group()
+    config.add_argument("--config", type=Path, help="Prompt-builder configuration file")
+    config.add_argument("--memory-config", type=Path, help="Shared galet-memory configuration file")
+    parser.add_argument("--no-semantic", action="store_true", help="Disable semantic recall")
+    parser.add_argument("--no-digests", action="store_true", help="Disable cross-session digest search")
     parser.add_argument("--account", default=DEFAULT_ACCOUNT)
     parser.add_argument(
         "--context-name",
@@ -52,18 +56,18 @@ def _parser() -> argparse.ArgumentParser:
         help="Directory containing procedural contexts and skills (default: storage root/namespace)",
     )
     parser.add_argument(
-        "--procedural-layout", choices=("lucy", "scoped"), default="lucy",
+        "--procedural-layout", choices=("lucy", "scoped"), default=None,
         help="Context and skill directory layout (default: lucy)",
     )
     parser.add_argument(
         "--storage-root",
         type=Path,
-        default=DEFAULT_STORAGE_ROOT,
+        default=None,
         help=f"Lucy storage root (default: {DEFAULT_STORAGE_ROOT})",
     )
     parser.add_argument(
         "--storage-namespace",
-        default=DEFAULT_STORAGE_NAMESPACE,
+        default=None,
         help=f"Storage namespace (default: {DEFAULT_STORAGE_NAMESPACE})",
     )
     parser.add_argument(
@@ -108,14 +112,14 @@ def _parser() -> argparse.ArgumentParser:
         default="text",
         dest="output_format",
     )
-    parser.add_argument("--total-tokens", type=int, default=8000)
-    parser.add_argument("--procedural-tokens", type=int, default=1000)
-    parser.add_argument("--episodic-event-tokens", type=int, default=1000)
-    parser.add_argument("--episodic-digest-tokens", type=int, default=500)
-    parser.add_argument("--semantic-tokens", type=int, default=1000)
-    parser.add_argument("--max-events", type=int, default=6)
-    parser.add_argument("--max-digests", type=int, default=2)
-    parser.add_argument("--semantic-top-k", type=int, default=3)
+    parser.add_argument("--total-tokens", type=int, default=None)
+    parser.add_argument("--procedural-tokens", type=int, default=None)
+    parser.add_argument("--episodic-event-tokens", type=int, default=None)
+    parser.add_argument("--episodic-digest-tokens", type=int, default=None)
+    parser.add_argument("--semantic-tokens", type=int, default=None)
+    parser.add_argument("--max-events", type=int, default=None)
+    parser.add_argument("--max-digests", type=int, default=None)
+    parser.add_argument("--semantic-top-k", type=int, default=None)
     parser.add_argument(
         "--event-kinds",
         nargs="*",
@@ -130,29 +134,29 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--semantic-score-threshold",
         type=float,
-        default=0.30,
+        default=None,
     )
     parser.add_argument(
         "--digest-score-threshold",
         type=float,
-        default=0.40,
+        default=None,
     )
     parser.add_argument(
         "--episodic-event-max-chars",
         type=int,
-        default=4000,
+        default=None,
     )
     parser.add_argument(
         "--episodic-digest-max-chars",
         type=int,
-        default=1800,
+        default=None,
     )
     parser.add_argument(
         "--semantic-item-max-chars",
         type=int,
-        default=1800,
+        default=None,
     )
-    parser.add_argument("--safety-margin-tokens", type=int, default=500)
+    parser.add_argument("--safety-margin-tokens", type=int, default=None)
     return parser
 
 
@@ -309,8 +313,81 @@ def _render_json(
     )
 
 
+_POLICY_ARGS = {
+    'total_tokens': 'total_tokens', 'safety_margin_tokens': 'safety_margin_tokens',
+    'procedural_tokens': 'procedural_tokens', 'episodic_event_tokens': 'episodic_event_tokens',
+    'episodic_digest_tokens': 'episodic_digest_tokens', 'semantic_tokens': 'semantic_tokens',
+    'max_events': 'maximum_events', 'max_digests': 'maximum_digests',
+    'semantic_top_k': 'maximum_semantic_documents',
+    'semantic_score_threshold': 'semantic_score_threshold', 'digest_score_threshold': 'digest_score_threshold',
+    'episodic_event_max_chars': 'episodic_event_max_chars',
+    'episodic_digest_max_chars': 'episodic_digest_max_chars', 'semantic_item_max_chars': 'semantic_item_max_chars',
+}
+
+
+def _select_session(args, memory):
+    if args.session_id:
+        session = memory.get_session(account_name=args.account, session_id=args.session_id)
+        if session is None:
+            raise ValueError('session not found for account')
+        return session
+    return _resolve_session(memory, account_name=args.account, friendly_name=args.chat_name)
+
+
+def _configured_main(args):
+    from .configured import build_prompt_builder
+    from .errors import PromptConfigurationError
+
+    conflicts = ('db', 'embedding_db', 'storage_root', 'storage_namespace', 'procedural_root',
+                 'procedural_layout', 'sqlite_vec_extension', 'credential_path')
+    if any(getattr(args, key) is not None for key in conflicts):
+        raise PromptConfigurationError('shared configuration cannot be combined with legacy storage/provider flags')
+    direct = ({'config_version': 1, 'memory_config_path': str(args.memory_config.expanduser().resolve())}
+              if args.memory_config is not None else None)
+    with build_prompt_builder(direct, path=args.config, allow_create=False) as builder:
+        runtime = builder.memory
+        if runtime.episodic is None:
+            raise PromptConfigurationError('the comparison CLI requires configured episodic memory')
+        session = _select_session(args, runtime.episodic)
+        context = args.context_name if args.context_name is not None else session.context_name or ''
+        if args.context_name and (runtime.procedural is None or
+                runtime.procedural.repository.resolve(args.account, context, args.project_name) is None):
+            raise PromptConfigurationError('requested procedural context was not found')
+        policy = replace(builder.policy, **{field: getattr(args, key) for key, field in _POLICY_ARGS.items()
+                                            if getattr(args, key) is not None})
+        compiled = builder.build(PromptRequest(
+            account_name=args.account, conversation_id=session.session_id,
+            context_name=context, project_name=args.project_name, current_input=args.request,
+            system_instructions=tuple(args.system), semantic_namespaces=tuple(args.namespaces or ()),
+            episodic_event_kinds=tuple(args.event_kinds),
+            include_structured_episodic_events=args.include_structured_events,
+            include_procedural=bool(context), include_episodic=True,
+            include_semantic=not args.no_semantic, include_digests=not args.no_digests,
+        ), policy)
+        database = Path(runtime.episodic.db_path)
+    render = _render_json if args.output_format == 'json' else _render_text
+    print(render(chat_name=args.chat_name or session.friendly_name or session.session_id,
+                 session=session, database=database, compiled=compiled))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    selected = args.config is not None or args.memory_config is not None or any(
+        name in os.environ for name in ('GALET_PROMPT_BUILDER_CONFIG_PATH', 'GALET_MEMORY_CONFIG_PATH'))
+    if selected:
+        try:
+            return _configured_main(args)
+        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+    args.storage_root = args.storage_root or DEFAULT_STORAGE_ROOT
+    args.storage_namespace = args.storage_namespace or DEFAULT_STORAGE_NAMESPACE
+    args.procedural_layout = args.procedural_layout or 'lucy'
+    defaults = PromptPolicy()
+    for key, field in _POLICY_ARGS.items():
+        if getattr(args, key) is None:
+            setattr(args, key, getattr(defaults, field))
     database = _database_path(args)
     embedding_database = _embedding_database_path(args)
 
@@ -337,11 +414,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     digest_search=digest_recall,
                 )
             )
-            session = _resolve_session(
-                episodic_memory,
-                account_name=args.account,
-                friendly_name=args.chat_name,
-            )
+            session = _select_session(args, episodic_memory)
             context_name = args.context_name if args.context_name is not None else (session.context_name or "")
             procedural_memory = _procedural_memory(args)
             if args.context_name and procedural_memory.repository.resolve(args.account, context_name, args.project_name) is None:
@@ -366,8 +439,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     ),
                     include_procedural=bool(context_name and args.procedural_tokens),
                     include_episodic=True,
-                    include_semantic=bool(args.namespaces),
-                    include_digests=True,
+                    include_semantic=bool(args.namespaces) and not args.no_semantic,
+                    include_digests=not args.no_digests,
                 ),
                 PromptPolicy(
                     total_tokens=args.total_tokens,
@@ -392,14 +465,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.output_format == "json":
         output = _render_json(
-            chat_name=args.chat_name,
+            chat_name=args.chat_name or session.friendly_name or session.session_id,
             session=session,
             database=database,
             compiled=compiled,
         )
     else:
         output = _render_text(
-            chat_name=args.chat_name,
+            chat_name=args.chat_name or session.friendly_name or session.session_id,
             session=session,
             database=database,
             compiled=compiled,
